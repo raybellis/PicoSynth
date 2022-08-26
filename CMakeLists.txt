@@ -1,28 +1,28 @@
-cmake_minimum_required(VERSION 3.5)
+cmake_minimum_required(VERSION 3.13)
+set(PROJECT PicoSynth)
+set(PICO_COMPILER pico_arm_clang)
 
-include(${CMAKE_CURRENT_SOURCE_DIR}/../../../hw/bsp/family_support.cmake)
+include(pico_sdk_import.cmake)
+include(pimoroni_pico_import.cmake)
 
-# gets PROJECT name for the example (e.g. <BOARD>-<DIR_NAME>)
-family_get_project_name(PROJECT ${CMAKE_CURRENT_LIST_DIR})
+project(${PROJECT} C CXX ASM)
 
-project(${PROJECT})
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_CXX_STANDARD 17)
+pico_sdk_init()
 
-# Checks this example is valid for the family and initializes the project
-family_initialize_project(${PROJECT} ${CMAKE_CURRENT_LIST_DIR})
+add_executable(${PROJECT}
+  src/main.cxx
+  src/usb_descriptors.c
+)
 
-add_executable(${PROJECT})
+pico_enable_stdio_usb(${PROJECT} 0)
+pico_enable_stdio_uart(${PROJECT} 1)
 
-# Example source
-target_sources(${PROJECT} PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/main.c
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/usb_descriptors.c
-        )
+target_include_directories(${PROJECT} PRIVATE ${CMAKE_CURRENT_LIST_DIR})
+target_include_directories(${PROJECT} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
-# Example include
-target_include_directories(${PROJECT} PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}/src
-        )
+include(${PIMORONI_PICO_PATH}/libraries/pico_rgb_keypad/pico_rgb_keypad.cmake)
 
-# Configure compilation flags and libraries for the example... see the corresponding function
-# in hw/bsp/FAMILY/family.cmake for details.
-family_configure_device_example(${PROJECT})
+pico_add_extra_outputs(${PROJECT})
+target_link_libraries(${PROJECT} PRIVATE pico_stdlib pico_rgb_keypad tinyusb_device tinyusb_board)
