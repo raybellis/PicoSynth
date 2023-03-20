@@ -29,6 +29,7 @@ void midi_task(uint8_t);
 
 int main() {
 	board_init();
+	stdio_usb_init();
 	tusb_init();
 	midid_init();
 	auto *pool = audio_init();
@@ -91,24 +92,28 @@ static void process_packet(uint8_t *packet)
 	board_led_write(led_state);
 	led_state = 1 - led_state; // toggle
 
-	printf("%02x %02x %02x %02x\n", packet[0], packet[1], packet[2], packet[3]);
-
 	uint8_t cable = packet[0] & 0xf0;
 	if (cable != 0) return;
 
 	uint8_t cin = packet[0] & 0x0f;
-	if (cin != 0x08 && cin != 0x09) return;
+	if (cin == 0x08 || cin == 0x09) {
 
-	uint8_t cmd = packet[1] & 0xf0;
-	uint8_t chan = packet[1] & 0x0f;
+		uint8_t cmd = packet[1] & 0xf0;
+		uint8_t chan = packet[1] & 0x0f;
 
-	uint8_t note = packet[2];
-	uint8_t vel = packet[3];
+		uint8_t note = packet[2];
+		uint8_t vel = packet[3];
 
-	if (cmd == 0x90 && vel > 0) {
-		note_on(chan, note, vel);
+		if (cmd == 0x90 && vel > 0) {
+			note_on(chan, note, vel);
+		} else {
+			note_off(chan, note);
+		}
 	} else {
-		note_off(chan, note);
+		if (packet[2] != 0x0b) {
+			fprintf(stdout, "%02x %02x %02x %02x\n", packet[0], packet[1], packet[2], packet[3]);
+			fflush(stdout);
+		}
 	}
 }
 

@@ -16,7 +16,7 @@ public:
 class NCOscillator : virtual public Oscillator {
 
 protected:
-	static const int	table_shift = 11;
+	static const int	table_shift = 10;
 	static const size_t table_len = (1 << table_shift);
 	static const size_t	pos_max = (table_len << 16);	// 11:16 format
 
