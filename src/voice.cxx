@@ -1,65 +1,18 @@
 #include <cmath>
 #include "voice.h"
 
+//--------------------------------------------------------------------+
+// Utility Functions
+//--------------------------------------------------------------------+
+
 static inline float note_to_freq(uint8_t note)
 {
-	return 440.0 * powf(2.0, (note - 69) / 12.0);
+        return 440.0 * powf(2.0, (note - 69) / 12.0);
 }
 
-inline void NCOscillator::set_frequency(float f)
-{
-	step = (uint32_t)(0x10000 * table_len * f / SAMPLE_RATE);
-}
-
-void SquarewaveOscillator::update(uint16_t vol, int32_t* samples)
-{
-	static const int mid = (table_len << 16) >> 1;
-	static const int mask = pos_max - 1;
-
-	for (int i = 0; i < SAMPLES_PER_BUFFER; ++i) {
-		int16_t amplitude = (pos < mid ? 32767 : -32767);
-		samples[i] += (vol * amplitude) >> 16;
-		pos = (pos + step) & mask;
-	}
-}
-
-void SawtoothOscillator::update(uint16_t vol, int32_t* samples)
-{
-	static const int mid = (table_len << 16) >> 1;
-	static const int mask = pos_max - 1;
-
-	// n:16 bit table entry, 16 bit sample amplitude 
-	// int16_t amplitude = ((pos - mid) >> 16) << (16 - n);
-
-	for (int i = 0; i < SAMPLES_PER_BUFFER; ++i) {
-		int16_t amplitude = (pos - mid) >> table_shift;
-		samples[i] += (vol * amplitude) >> 17;
-		pos = (pos + step) & mask;
-	}
-}
-
-static bool wave_init = false;
-int16_t WavetableOscillator::table[NCOscillator::table_len];
-
-WavetableOscillator::WavetableOscillator()
-{
-	if (!wave_init) {
-		for (int i = 0; i < table_len; ++i) {
-			table[i] = 32767 * cosf(i * 2 * (float) (M_PI / table_len));
-		}
-		wave_init = true;
-	}
-}
-
-void WavetableOscillator::update(uint16_t vol, int32_t* samples)
-{
-	static const int mask = pos_max - 1;
-	for (uint i = 0; i < SAMPLES_PER_BUFFER; ++i) {
-		int16_t amplitude = table[pos >> 16];
-		samples[i] += (vol * amplitude) >> 16;
-		pos = (pos + step) & mask;
-	}
-}
+//--------------------------------------------------------------------+
+// Envelope
+//--------------------------------------------------------------------+
 
 ADSR::ADSR(uint8_t a, uint8_t d, uint8_t s, uint8_t r)
 	: phase(off), level(0), a(a), d(d), s(s << 8), r(r)
@@ -111,9 +64,14 @@ void ADSR::gate_off()
 	phase = release;
 }
 
+//--------------------------------------------------------------------+
+// Voice control
+//--------------------------------------------------------------------+
+
 Voice::Voice()
 {
-	osc = new SawtoothOscillator();
+	osc = new SineOscillator();
+	// osc = new SawtoothOscillator();
 	// osc = new WavetableOscillator();
 	// osc = new SquarewaveOscillator();
 	env = new ADSR(30, 20, 80, 20);
@@ -141,3 +99,7 @@ void Voice::update(int32_t* samples)
 		osc->update((vel * e) >> 8, samples); // 15 + 7 bits back into 16
 	}
 }
+
+//--------------------------------------------------------------------+
+// Voice allocator
+//--------------------------------------------------------------------+

@@ -15,6 +15,7 @@ add_executable(${PROJECT}
 	src/main.cxx
 	src/usb_descriptors.c
 	src/audio.c
+	src/oscillator.cxx
 	src/voice.cxx
 )
 
