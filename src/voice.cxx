@@ -70,8 +70,8 @@ void ADSR::gate_off()
 
 Voice::Voice()
 {
-	osc = new SineOscillator();
-	// osc = new SawtoothOscillator();
+	// osc = new SineOscillator();
+	osc = new SawtoothOscillator();
 	// osc = new WavetableOscillator();
 	// osc = new SquarewaveOscillator();
 	env = new ADSR(30, 20, 80, 20);

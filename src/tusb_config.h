@@ -48,13 +48,15 @@
 // COMMON CONFIGURATION
 //--------------------------------------------------------------------
 
+#define CFG_TUSB_RHPORT0_MODE     OPT_MODE_DEVICE
+
 // defined by compiler flags for flexibility
 #ifndef CFG_TUSB_MCU
 #error CFG_TUSB_MCU must be defined
 #endif
 
 #ifndef CFG_TUSB_OS
-#define CFG_TUSB_OS           OPT_OS_NONE
+#define CFG_TUSB_OS           OPT_OS_PICO
 #endif
 
 #ifndef CFG_TUSB_DEBUG

@@ -91,6 +91,8 @@ static void process_packet(uint8_t *packet)
 	board_led_write(led_state);
 	led_state = 1 - led_state; // toggle
 
+	printf("%02x %02x %02x %02x\n", packet[0], packet[1], packet[2], packet[3]);
+
 	uint8_t cable = packet[0] & 0xf0;
 	if (cable != 0) return;
 
@@ -183,16 +185,16 @@ void keypad_task(void)
 			if (pressed & mask) {
 				packet[0] = 0x09;
 				packet[1] = 0x90;
-				packet[2] = 60 + i;
-				packet[3] = 80;
+				packet[2] = 48 + i;
+				packet[3] = 100;
 				tud_midi_n_packet_write(0, packet);
 				process_packet(packet);
 				keypad.illuminate(i, 0xff - (i << 4), i << 4, 0);
 			} else if (prev & mask) {
 				packet[0] = 0x08;
 				packet[1] = 0x80;
-				packet[2] = 60 + i;
-				packet[3] = 80;
+				packet[2] = 48 + i;
+				packet[3] = 100;
 				tud_midi_n_packet_write(0, packet);
 				process_packet(packet);
 				keypad.illuminate(i, 0, 0, 0);
