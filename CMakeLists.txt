@@ -21,8 +21,8 @@ add_executable(${PROJECT}
 
 add_compile_options(-Wall -Werror)
 
-pico_enable_stdio_usb(${PROJECT} 0)
-pico_enable_stdio_uart(${PROJECT} 1)
+pico_enable_stdio_usb(${PROJECT} 1)
+pico_enable_stdio_uart(${PROJECT} 0)
 
 target_include_directories(${PROJECT} PRIVATE ${CMAKE_CURRENT_LIST_DIR})
 target_include_directories(${PROJECT} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
