@@ -1,0 +1,10 @@
+CMakeCache.txt
+CMakeFiles
+Makefile
+PicoSynth.*
+cmake_install.cmake
+elf2uf2
+generated
+pico-sdk
+pico_extras
+pioasm
