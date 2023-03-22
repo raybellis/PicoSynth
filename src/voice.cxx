@@ -73,7 +73,7 @@ Voice::Voice()
 	// osc = new SineOscillator();
 	osc = new SawtoothOscillator();
 	// osc = new WavetableOscillator();
-	// osc = new SquarewaveOscillator();
+	// osc = new SquareOscillator();
 	env = new ADSR(30, 20, 80, 20);
 }
 
@@ -92,11 +92,26 @@ void Voice::note_off()
 	env->gate_off();
 }
 
-void Voice::update(int32_t* samples)
+static int16_t temp[SAMPLES_PER_BUFFER];
+
+void Voice::update(int32_t* samples, size_t n)
 {
-	uint16_t e = env->update();	
-	if (true || e) {
-		osc->update((vel * e) >> 8, samples); // 15 + 7 bits back into 16
+	auto dca = env->update();	
+
+	if (dca) {
+		osc->update(temp, n);
+#if SAMPLE_CHANS == 1
+		uint16_t vol = (dca * vel) >> 6;	// 22 bits (15 env + 7 velocity)
+		for (int i = 0; i < n; ++i) {
+			samples[i] += (vol * temp[i]) >> 16;
+		}
+#else
+		uint16_t vol = (dca * vel) >> 6;	// 22 bits (15 env + 7 velocity)
+		for (int i = 0, j = 0; i < n; ++i) {
+			samples[j++] += (vol * temp[i]) >> 16;
+			samples[j++] += (vol * temp[i]) >> 16;
+		}
+#endif
 	}
 }
 

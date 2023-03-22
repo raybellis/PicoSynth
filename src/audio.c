@@ -2,26 +2,23 @@
 #include <math.h>
 
 #include "pico/stdlib.h"
-#include "pico/audio_i2s.h"
 #include "audio.h"
-
-#define SAMPLES_PER_BUFFER 256
 
 struct audio_buffer_pool *audio_init() {
 
 	static audio_format_t audio_format = {
 			.format = AUDIO_BUFFER_FORMAT_PCM_S16,
 			.sample_freq = SAMPLE_RATE,
-			.channel_count = 1,
+			.channel_count = SAMPLE_CHANS,
 	};
 
 	static struct audio_buffer_format producer_format = {
 			.format = &audio_format,
-			.sample_stride = 2
+			.sample_stride = 2 * SAMPLE_CHANS
 	};
 
 	struct audio_buffer_pool *producer_pool =
-		audio_new_producer_pool(&producer_format, 3, SAMPLES_PER_BUFFER); // todo correct size
+		audio_new_producer_pool(&producer_format, 3, SAMPLES_PER_BUFFER);
 	bool __unused ok;
 	const struct audio_format *output_format;
 

@@ -9,7 +9,7 @@ private:
 public:
 	virtual void		set_frequency(float f) = 0;
 	virtual void		sync() = 0;
-	virtual void		update(uint16_t vol, int32_t*) = 0;
+	virtual void		update(int16_t*, size_t n) = 0;
 
 };
 
@@ -32,13 +32,13 @@ public:
 class SquareOscillator : virtual public NCOscillator {
 
 public:
-	virtual void		update(uint16_t vol, int32_t*);
+	virtual void		update(int16_t*, size_t n);
 };
 
 class SawtoothOscillator : virtual public NCOscillator {
 
 public:
-	virtual void		update(uint16_t vol, int32_t*);
+	virtual void		update(int16_t*, size_t n);
 };
 
 class WavetableOscillator : virtual public NCOscillator {
@@ -50,7 +50,7 @@ public:
 						WavetableOscillator(int16_t *wavetable);
 
 public:
-	virtual void		update(uint16_t vol, int32_t*);
+	virtual void		update(int16_t*, size_t n);
 
 };
 
