@@ -60,6 +60,6 @@ public:
 					Voice();
 
 public:
-	void			update(int32_t* buf);
+	void			update(int32_t* buf, size_t n);
 
 };

@@ -4,6 +4,7 @@
 #include "pico_rgb_keypad.hpp"
 #include "bsp/board.h"
 #include "tusb.h"
+#include "audio.h"
 #include "voice.h"
 
 #define USE_MIDI_CALLBACK 0
@@ -16,23 +17,26 @@ enum	{
 
 pimoroni::PicoRGBKeypad keypad;
 
-Voice voices[32];
+#define N_VOICES 32
+
+static Voice voices[N_VOICES];
 
 static uint32_t blink_interval_ms = BLINK_NOT_MOUNTED;
 const uint LED_PIN = PICO_DEFAULT_LED_PIN;
 static bool led_state = false;
+static audio_buffer_pool *ap = nullptr;
 
 void led_blinking_task();
 void keypad_task();
-void audio_task(audio_buffer_pool *);
+void audio_task();
 void midi_task(uint8_t);
 
 int main() {
+
+	stdio_init_all();
 	board_init();
-	stdio_usb_init();
 	tusb_init();
-	midid_init();
-	auto *pool = audio_init();
+	ap = audio_init();
 
 	keypad.init();
 	keypad.set_brightness(0.2f);
@@ -42,10 +46,10 @@ int main() {
 		tud_task();
 		led_blinking_task();
 		keypad_task();
-#if USE_MIDI_CALLBACK == 0
+#if !USE_MIDI_CALLBACK
 		midi_task(0);
 #endif
-		audio_task(pool);
+		audio_task();
 	}
 }
 
@@ -56,7 +60,7 @@ int main() {
 static struct {
 	uint8_t	chan;
 	uint8_t	note;
-} valloc[32];
+} valloc[N_VOICES];
 
 static uint32_t in_use = 0;
 static uint8_t next = 0;
@@ -64,7 +68,7 @@ static uint8_t next = 0;
 static void note_on(uint8_t chan, uint8_t note, uint8_t vel)
 {
 	uint32_t mask = 1;
-	for (uint8_t i = 0; i < 32; ++i, mask <<= 1) {
+	for (uint8_t i = 0; i < N_VOICES; ++i, mask <<= 1) {
 		if ((in_use & mask) == 0) {
 			in_use |= mask;
 			valloc[i] = { chan, note };
@@ -77,7 +81,7 @@ static void note_on(uint8_t chan, uint8_t note, uint8_t vel)
 static void note_off(uint8_t chan, uint8_t note)
 {
 	uint32_t mask = 1;
-	for (uint8_t i = 0; i < 32; ++i, mask <<= 1) {
+	for (uint8_t i = 0; i < N_VOICES; ++i, mask <<= 1) {
 		if (valloc[i].chan == chan && valloc[i].note == note) {
 			in_use &= ~(1 << i);
 			valloc[i] = { 255, };
@@ -124,12 +128,14 @@ static void process_packet(uint8_t *packet)
 // Invoked when device is mounted
 void tud_mount_cb(void)
 {
+	printf("mount\n");
 	blink_interval_ms = BLINK_MOUNTED;
 }
 
 // Invoked when device is unmounted
 void tud_umount_cb(void)
 {
+	printf("umount\n");
 	blink_interval_ms = BLINK_NOT_MOUNTED;
 }
 
@@ -139,6 +145,7 @@ void tud_umount_cb(void)
 // 2.5 mA from bus
 void tud_suspend_cb(bool remote_wakeup_en)
 {
+	printf("suspend\n");
 	(void) remote_wakeup_en;
 	blink_interval_ms = BLINK_SUSPENDED;
 }
@@ -146,6 +153,7 @@ void tud_suspend_cb(bool remote_wakeup_en)
 // Invoked when usb bus is resumed
 void tud_resume_cb(void)
 {
+	printf("resume\n");
 	blink_interval_ms = BLINK_MOUNTED;
 }
 
@@ -190,7 +198,7 @@ void keypad_task(void)
 			if (pressed & mask) {
 				packet[0] = 0x09;
 				packet[1] = 0x90;
-				packet[2] = 48 + i;
+				packet[2] = 60 + i;
 				packet[3] = 100;
 				tud_midi_n_packet_write(0, packet);
 				process_packet(packet);
@@ -198,7 +206,7 @@ void keypad_task(void)
 			} else if (prev & mask) {
 				packet[0] = 0x08;
 				packet[1] = 0x80;
-				packet[2] = 48 + i;
+				packet[2] = 60 + i;
 				packet[3] = 100;
 				tud_midi_n_packet_write(0, packet);
 				process_packet(packet);
@@ -215,24 +223,26 @@ void keypad_task(void)
 //--------------------------------------------------------------------+
 // AUDIO TASK
 //--------------------------------------------------------------------+
-void audio_task(audio_buffer_pool* ap)
-{
-	static const int n = SAMPLES_PER_BUFFER;
-	static int32_t *samples = (int32_t*)calloc(n, sizeof(int32_t));
 
-	for (int i = 0; i < n; ++i) {
+static int32_t samples[SAMPLE_CHANS * SAMPLES_PER_BUFFER];
+
+void audio_task(void)
+{
+	for (int i = 0; i < SAMPLE_CHANS * SAMPLES_PER_BUFFER ; ++i) {
 		samples[i] = 0;
 	}
 
 	for (auto& voice : voices) {
-		voice.update(samples);
+		voice.update(samples, SAMPLES_PER_BUFFER);
 	}
 
 	struct audio_buffer *buffer = take_audio_buffer(ap, true);
 	int16_t *out = (int16_t *) buffer->buffer->bytes;
-	for (int i = 0; i < buffer->max_sample_count; ++i) {
-		out[i] = samples[i] >> 5;
+
+	for (int i = 0; i < SAMPLE_CHANS * buffer->max_sample_count; ++i) {
+		out[i] = samples[i] >> 9;
 	}
+
 	buffer->sample_count = buffer->max_sample_count;
 	give_audio_buffer(ap, buffer);
 }
@@ -246,7 +256,7 @@ void led_blinking_task(void)
 	static uint32_t start_ms = 0;
 
 	// Blink every interval ms
-	if ( board_millis() - start_ms < blink_interval_ms) return; // not enough time
+	if (board_millis() - start_ms < blink_interval_ms) return; // not enough time
 	start_ms += blink_interval_ms;
 
 	board_led_write(led_state);
