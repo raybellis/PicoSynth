@@ -1,7 +1,9 @@
 #pragma once
 
 #include <cstdint>
-#include <memory>
+
+class Oscillator;
+class Envelope;
 
 class Patch {
 

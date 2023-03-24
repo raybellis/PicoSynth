@@ -1,3 +1,6 @@
+#include "patch.h"
+
+#if 0
 Patch::presets[] = {
 	{
 		0, 100, 10, 80, 10
@@ -12,3 +15,4 @@ Patch::presets[] = {
 		3, 100, 10, 80, 10
 	},
 };
+#endif

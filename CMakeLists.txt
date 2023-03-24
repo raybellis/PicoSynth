@@ -15,10 +15,11 @@ add_executable(${PROJECT}
 	src/main.cxx
 	src/usb_descriptors.c
 	src/audio.c
+	src/engine.cxx
 	src/channel.cxx
 	src/patch.cxx
 	src/oscillator.cxx
-	src/voice.cxx
+	src/envelope.cxx
 )
 
 add_compile_options(-Wall -Werror)

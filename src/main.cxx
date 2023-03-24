@@ -7,6 +7,8 @@
 #include "audio.h"
 #include "voice.h"
 
+#include "engine.h"
+
 #define USE_MIDI_CALLBACK 0
 
 enum	{
@@ -16,10 +18,8 @@ enum	{
 };
 
 pimoroni::PicoRGBKeypad keypad;
+SynthEngine engine;
 
-#define N_VOICES 32
-
-static Voice voices[N_VOICES];
 
 static uint32_t blink_interval_ms = BLINK_NOT_MOUNTED;
 const uint LED_PIN = PICO_DEFAULT_LED_PIN;
@@ -53,44 +53,6 @@ int main() {
 	}
 }
 
-//--------------------------------------------------------------------+
-// Voice allocator
-//--------------------------------------------------------------------+
-
-static struct {
-	uint8_t	chan;
-	uint8_t	note;
-} valloc[N_VOICES];
-
-static uint32_t in_use = 0;
-static uint8_t next = 0;
-
-static void note_on(uint8_t chan, uint8_t note, uint8_t vel)
-{
-	uint32_t mask = 1;
-	for (uint8_t i = 0; i < N_VOICES; ++i, mask <<= 1) {
-		if ((in_use & mask) == 0) {
-			in_use |= mask;
-			valloc[i] = { chan, note };
-			voices[i].note_on(note, vel);
-			return;
-		}
-	}
-}
-
-static void note_off(uint8_t chan, uint8_t note)
-{
-	uint32_t mask = 1;
-	for (uint8_t i = 0; i < N_VOICES; ++i, mask <<= 1) {
-		if (valloc[i].chan == chan && valloc[i].note == note) {
-			in_use &= ~(1 << i);
-			valloc[i] = { 255, };
-			voices[i].note_off();
-			break;
-		}
-	}
-}
-
 static void process_packet(uint8_t *packet)
 {
 	board_led_write(led_state);
@@ -99,26 +61,7 @@ static void process_packet(uint8_t *packet)
 	uint8_t cable = packet[0] & 0xf0;
 	if (cable != 0) return;
 
-	uint8_t cin = packet[0] & 0x0f;
-	if (cin == 0x08 || cin == 0x09) {
-
-		uint8_t cmd = packet[1] & 0xf0;
-		uint8_t chan = packet[1] & 0x0f;
-
-		uint8_t note = packet[2];
-		uint8_t vel = packet[3];
-
-		if (cmd == 0x90 && vel > 0) {
-			note_on(chan, note, vel);
-		} else {
-			note_off(chan, note);
-		}
-	} else {
-		if (packet[2] != 0x0b) {
-			fprintf(stdout, "%02x %02x %02x %02x\n", packet[0], packet[1], packet[2], packet[3]);
-			fflush(stdout);
-		}
-	}
+	engine.midi_in(packet[1], packet[2], packet[3]);
 }
 
 //--------------------------------------------------------------------+
@@ -232,9 +175,7 @@ void audio_task(void)
 		samples[i] = 0;
 	}
 
-	for (auto& voice : voices) {
-		voice.update(samples, SAMPLES_PER_BUFFER);
-	}
+	engine.update(samples, SAMPLES_PER_BUFFER);
 
 	struct audio_buffer *buffer = take_audio_buffer(ap, true);
 	int16_t *out = (int16_t *) buffer->buffer->bytes;
