@@ -5,8 +5,6 @@
 #include "bsp/board.h"
 #include "tusb.h"
 #include "audio.h"
-#include "voice.h"
-
 #include "engine.h"
 
 #define USE_MIDI_CALLBACK 0
@@ -19,7 +17,6 @@ enum	{
 
 pimoroni::PicoRGBKeypad keypad;
 SynthEngine engine;
-
 
 static uint32_t blink_interval_ms = BLINK_NOT_MOUNTED;
 const uint LED_PIN = PICO_DEFAULT_LED_PIN;
@@ -71,14 +68,12 @@ static void process_packet(uint8_t *packet)
 // Invoked when device is mounted
 void tud_mount_cb(void)
 {
-	printf("mount\n");
 	blink_interval_ms = BLINK_MOUNTED;
 }
 
 // Invoked when device is unmounted
 void tud_umount_cb(void)
 {
-	printf("umount\n");
 	blink_interval_ms = BLINK_NOT_MOUNTED;
 }
 
@@ -88,7 +83,6 @@ void tud_umount_cb(void)
 // 2.5 mA from bus
 void tud_suspend_cb(bool remote_wakeup_en)
 {
-	printf("suspend\n");
 	(void) remote_wakeup_en;
 	blink_interval_ms = BLINK_SUSPENDED;
 }
@@ -96,7 +90,6 @@ void tud_suspend_cb(bool remote_wakeup_en)
 // Invoked when usb bus is resumed
 void tud_resume_cb(void)
 {
-	printf("resume\n");
 	blink_interval_ms = BLINK_MOUNTED;
 }
 
@@ -167,7 +160,7 @@ void keypad_task(void)
 // AUDIO TASK
 //--------------------------------------------------------------------+
 
-static int32_t samples[SAMPLE_CHANS * SAMPLES_PER_BUFFER];
+int32_t samples[SAMPLE_CHANS * SAMPLES_PER_BUFFER];
 
 void audio_task(void)
 {
@@ -175,12 +168,13 @@ void audio_task(void)
 		samples[i] = 0;
 	}
 
+	// get samples from the synth engine
 	engine.update(samples, SAMPLES_PER_BUFFER);
 
 	struct audio_buffer *buffer = take_audio_buffer(ap, true);
 	int16_t *out = (int16_t *) buffer->buffer->bytes;
 
-	for (int i = 0; i < SAMPLE_CHANS * buffer->max_sample_count; ++i) {
+	for (auto i = 0U; i < SAMPLE_CHANS * buffer->max_sample_count; ++i) {
 		out[i] = samples[i] >> 9;
 	}
 

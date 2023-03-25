@@ -1,47 +1,59 @@
 #include "envelope.h"
 
 //--------------------------------------------------------------------+
-// Envelope
+// Generic Envelope with 16 bits of resolution
+//--------------------------------------------------------------------+
+Envelope::Envelope()
+	: _level(0)
+{
+}
+
+//--------------------------------------------------------------------+
+// Standard four phase ADSR Envelope
 //--------------------------------------------------------------------+
 
 ADSR::ADSR(uint8_t a, uint8_t d, uint8_t s, uint8_t r)
-	: phase(off), v(0), a(a), d(d), s(s << 8), r(r)
+	: s(s << 8), a(a), d(d), r(r), phase(off)
 {
-	if (a < 1) a = 0;
-	if (d < 1) d = 0;
-	if (r < 1) r = 0;
+	if (a < 1) a = 1;
+	if (d < 1) d = 1;
+	if (r < 1) r = 1;
 }
 
-uint16_t ADSR::update()
+int16_t ADSR::update()
 {
-	int32_t l = v;	// large and signed to allow overflow
+	auto& v = _level;
+
 	switch (phase) {
 		case attack: {
-			l += (a << 7);
-			if (l >= 0x7fff) {
-				l = 0x7fff;
+			v += (a << 7);
+			if (v >= 0x7fff) {
+				v = 0x7fff;
 				phase = decay;
 			}
 			break;
 		}
 		case decay: {
-			l -= (d << 5);
-			if (l <= s) {
-				l = s;
+			v -= (d << 5);
+			if (v <= s) {
+				v = s;
 				phase = sustain;
 			}
 			break;
 		}
 		case release: {
-			l -= (r << 4);
-			if (l <= 0) {
-				l = 0;
+			v -= (r << 4);
+			if (v <= 0) {
+				v = 0;
 				phase = off;
 			}
+			break;
 		}
+		default:
+			break;
 	}
-	v = (uint16_t)l;
-	return v;
+
+	return (int16_t)v;
 }
 
 void ADSR::gate_on()

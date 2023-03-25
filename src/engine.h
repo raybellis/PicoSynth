@@ -11,7 +11,7 @@ class Envelope;
 class SynthEngine {
 
 private:
-	static const int		nv = 64;
+	static const int		nv = 32;
 
 							struct Voice {
 								Channel*		chan;
@@ -19,14 +19,17 @@ private:
 								Envelope*		dca;
 								uint8_t			note;
 								uint8_t			vel;
+								bool			free:1;
+								bool			steal:1;
 							};
 
 	Voice					voice[nv];
 	Channel					channel[16];
 
 private:
-	Voice&					allocate();
+	Voice*					allocate();
 	void					deallocate(Voice& v);
+
 	void					note_on(uint8_t chan, uint8_t note, uint8_t vel);
 	void					note_off(uint8_t chan, uint8_t note, uint8_t vel);
 

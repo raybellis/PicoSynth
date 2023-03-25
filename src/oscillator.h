@@ -11,6 +11,9 @@ public:
 	virtual void		sync() = 0;
 	virtual void		update(int16_t*, size_t n) = 0;
 
+public:
+						Oscillator() = default;
+	virtual				~Oscillator() = default;
 };
 
 class NCOscillator : virtual public Oscillator {

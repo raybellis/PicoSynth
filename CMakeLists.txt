@@ -22,13 +22,13 @@ add_executable(${PROJECT}
 	src/envelope.cxx
 )
 
-add_compile_options(-Wall -Werror)
-
 pico_enable_stdio_usb(${PROJECT} 0)
 pico_enable_stdio_uart(${PROJECT} 1)
 
 target_include_directories(${PROJECT} PRIVATE ${CMAKE_CURRENT_LIST_DIR})
 target_include_directories(${PROJECT} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
+target_compile_options(${PROJECT} PRIVATE -Wall -Werror -O3)
 
 target_compile_definitions(${PROJECT} PRIVATE
 	PICO_AUDIO_I2S_MONO_INPUT=0
