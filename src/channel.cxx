@@ -18,7 +18,6 @@ void Channel::update_cc(uint8_t cc, uint8_t v)
 	if (cc == pan) {
 		pan_l = 127 * sqrtf(v / 127.0);
 		pan_r = 127 * sqrtf((127 - v) / 127.0);
-		printf("%d %d\n", cc, v);
 	}
 }
 
@@ -31,16 +30,16 @@ void Channel::update_bend(uint8_t lsb, uint8_t msb)
 void Channel::midi_in(uint8_t cmd, uint8_t d1, uint8_t d2)
 {
 	switch (cmd >> 4) {
-		case 0xb0:
+		case 0xb:
 			update_cc(d1, d2);
 			break;
-		case 0xc0:
+		case 0xc:
 			// program change
 			break;
-		case 0xd0:
+		case 0xd:
 			pressure = d1;
 			break;
-		case 0xe0:
+		case 0xe:
 			update_bend(d1, d2);
 			break;
 	}
