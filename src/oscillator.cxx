@@ -1,5 +1,7 @@
 #include <cmath>
+#include <cstdio>
 #include "oscillator.h"
+#include "hardware/interp.h"
 
 //--------------------------------------------------------------------+
 // Generic Numerically Controlled Oscillator
@@ -70,11 +72,28 @@ WavetableOscillator::WavetableOscillator(int16_t *wavetable)
 {
 }
 
-void WavetableOscillator::update(int16_t* samples, size_t n)
+void __not_in_flash_func(WavetableOscillator::update)(int16_t* samples, size_t n)
 {
-	static const int mask = pos_max - 1;
+#if 1
+	interp_config cfg = interp_default_config();
+	interp_config_set_shift(&cfg, 15);
+	interp_config_set_mask(&cfg, 1, table_shift);
+	interp_config_set_add_raw(&cfg, true);
+	interp_set_config(interp0, 0, &cfg);
+
+	interp0->base[0] = step;
+	interp0->base[2] = (uint32_t)wavetable;
+	interp0->accum[0] = pos;
+
+	for (uint i = 0; i < n; ++i) {
+		samples[i] = *(int16_t*)interp0->pop[2];
+	}
+	pos = interp0->accum[0] & (pos_max - 1);
+
+#else
 	for (uint i = 0; i < n; ++i) {
 		samples[i] = wavetable[pos >> 16];
-		pos = (pos + step) & mask;
+		pos = (pos + step) & (pos_max - 1);
 	}
+#endif
 }

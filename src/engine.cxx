@@ -62,7 +62,7 @@ Voice* SynthEngine::allocate()
 // temporary buffer of mono samples
 static int16_t mono[SAMPLES_PER_BUFFER];
 
-void SynthEngine::update(int32_t* samples, size_t n)
+void __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 {
 	// update all DCAs, and release any voice
 	// that now has an inactive DCA
@@ -134,6 +134,8 @@ void SynthEngine::note_on(uint8_t chan, uint8_t note, uint8_t vel)
 		v.dca = new ADSR(30, 20, 80, 20);
 		switch (chan % 4) {
 		case 0:
+			v.osc = new SineOscillator();
+			break;
 		case 1:
 			v.osc = new SawtoothOscillator();
 			break;

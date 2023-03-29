@@ -1,5 +1,6 @@
 #include "pico/stdlib.h"
 #include "hardware/gpio.h"
+#include "hardware/structs/systick.h"
 #include "pico/binary_info.h"
 #include "pico_rgb_keypad.hpp"
 #include "bsp/board.h"
@@ -29,6 +30,9 @@ void audio_task();
 void midi_task(uint8_t);
 
 int main() {
+
+    systick_hw->rvr = 0xffffff;
+    systick_hw->csr = 0x5;
 
 	stdio_init_all();
 	board_init();

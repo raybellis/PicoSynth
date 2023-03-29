@@ -43,6 +43,7 @@ include(${PIMORONI_PICO_PATH}/libraries/pico_rgb_keypad/pico_rgb_keypad.cmake)
 target_link_libraries(${PROJECT} PRIVATE
 	pico_stdlib
 	pico_audio_i2s
+	hardware_interp
 	pico_rgb_keypad
 	tinyusb_device
 	tinyusb_board
