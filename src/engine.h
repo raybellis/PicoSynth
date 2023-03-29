@@ -8,22 +8,31 @@
 class Oscillator;
 class Envelope;
 
+class Voice {
+
+	friend class			SynthEngine;
+
+private:
+	uint8_t					chan;
+	bool					free:1;
+	bool					steal:1;
+	uint8_t					note;
+	uint8_t					vel;
+	Oscillator*				osc;
+	Envelope*				dca;
+
+private:
+	void					init();
+
+public:
+							Voice();
+
+};
+
 class SynthEngine {
 
 private:
-	static const int		nv = 32;
-
-							struct Voice {
-								Channel*		chan;
-								Oscillator*		osc;
-								Envelope*		dca;
-								uint8_t			note;
-								uint8_t			vel;
-								bool			free:1;
-								bool			steal:1;
-							};
-
-	Voice					voice[nv];
+	Voice					voice[64];
 	Channel					channel[16];
 
 private:

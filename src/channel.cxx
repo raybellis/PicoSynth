@@ -24,12 +24,13 @@ void Channel::update_cc(uint8_t cc, uint8_t v)
 void Channel::update_bend(uint8_t lsb, uint8_t msb)
 {
 	bend = (int16_t)((msb << 7) | lsb) - 8192;
-	bend_f = bend / 8192.0;
+	bend_f = bend_range * bend / 8192.0;
 }
 
-void Channel::midi_in(uint8_t cmd, uint8_t d1, uint8_t d2)
+void Channel::midi_in(uint8_t c, uint8_t d1, uint8_t d2)
 {
-	switch (cmd >> 4) {
+	uint8_t cmd = c >> 4;
+	switch (cmd) {
 		case 0xb:
 			update_cc(d1, d2);
 			break;
