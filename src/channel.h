@@ -7,6 +7,10 @@ class Channel {
 	friend class			SynthEngine;
 
 private:
+	static bool				init;
+	static uint8_t			pan_table[128];
+
+private:
 	void					update_cc(uint8_t cc, uint8_t value);
 	void					update_bend(uint8_t lsb, uint8_t msb);
 

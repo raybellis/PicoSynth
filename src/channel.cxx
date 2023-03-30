@@ -3,9 +3,19 @@
 #include "channel.h"
 #include "midi.h"
 
+bool Channel::init = false;
+uint8_t Channel::pan_table[128];
+
 Channel::Channel() :
 	control{0, }
 {
+	if (!init) {
+		init = true;
+		for (uint8_t i = 0; i < 128; ++i) {
+			pan_table[i] = 127 * sqrtf(i / 127.0);
+		}
+	}
+
 	update_cc(volume, 127);
 	update_cc(pan, 64);
 	update_bend(0, 64);
@@ -16,8 +26,8 @@ void Channel::update_cc(uint8_t cc, uint8_t v)
 	control[cc] = v;
 
 	if (cc == pan) {
-		pan_l = 127 * sqrtf(v / 127.0);
-		pan_r = 127 * sqrtf((127 - v) / 127.0);
+		pan_l = pan_table[v];
+		pan_r = pan_table[127 - v];
 	}
 }
 
