@@ -8,6 +8,8 @@
 #include "audio.h"
 #include "engine.h"
 
+#include <stdfix.h>
+
 #define USE_MIDI_CALLBACK 0
 
 enum	{

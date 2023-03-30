@@ -7,9 +7,11 @@
 // Generic Numerically Controlled Oscillator
 //--------------------------------------------------------------------+
 
+const float freq_mul = 1.0 / SAMPLE_RATE;
+
 inline void NCOscillator::set_frequency(float f)
 {
-	step = (uint32_t)(0x10000 * table_len * f / SAMPLE_RATE);
+	step = (uint32_t)(0x10000 * table_len * f * freq_mul);
 }
 
 //--------------------------------------------------------------------+
@@ -74,7 +76,6 @@ WavetableOscillator::WavetableOscillator(int16_t *wavetable)
 
 void __not_in_flash_func(WavetableOscillator::update)(int16_t* samples, size_t n)
 {
-#if 1
 	interp_config cfg = interp_default_config();
 	interp_config_set_shift(&cfg, 15);
 	interp_config_set_mask(&cfg, 1, table_shift);
@@ -89,11 +90,4 @@ void __not_in_flash_func(WavetableOscillator::update)(int16_t* samples, size_t n
 		samples[i] = *(int16_t*)interp0->pop[2];
 	}
 	pos = interp0->accum[0] & (pos_max - 1);
-
-#else
-	for (uint i = 0; i < n; ++i) {
-		samples[i] = wavetable[pos >> 16];
-		pos = (pos + step) & (pos_max - 1);
-	}
-#endif
 }

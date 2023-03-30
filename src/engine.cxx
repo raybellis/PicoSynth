@@ -103,11 +103,15 @@ void __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 		uint16_t level_r = (dca * chan.pan_r) >> 16;
 #endif
 
-		// get the pitch bend amount (in floating-point semitones)
-		float bend = chan.bend_f;
+		// calculate the note frequency based on MIDI note 69 = A440
+		const float divisor = 1 / 12.0;
+		float freq = 440.0 * powf(2.0, divisor * (v.note - 69));
 
-		// calculate the resulting frequency based on MIDI note 69 = A440
-		float freq = 440.0 * powf(2.0, (bend + v.note - 69) / 12.0);
+		// get the pitch bend multiplier (in floating-point octaves)
+		if (chan.bend) {
+			freq *= chan.bend_f;
+		}
+
 		v.osc->set_frequency(freq);
 
 		// generate a buffer full of (mono) samples
