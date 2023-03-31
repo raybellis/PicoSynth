@@ -37,7 +37,7 @@ int16_t ADSR::update()
 			v -= (d << 5);
 			if (v <= s) {
 				v = s;
-				phase = sustain;
+				phase = v ? sustain : off;	// ADSR with no sustain
 			}
 			break;
 		}
