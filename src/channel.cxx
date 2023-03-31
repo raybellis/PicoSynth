@@ -33,9 +33,13 @@ void Channel::update_cc(uint8_t cc, uint8_t v)
 
 void Channel::update_bend(uint8_t lsb, uint8_t msb)
 {
+	static int16_t bend_x = 0x8000;				// impossible value
 	const float divisor = 1.0 / (12 * 8192);	// fractions of an octave
 	bend = (int16_t)((msb << 7) | lsb) - 8192;
-	bend_f = bend ? powf(2.0, divisor * bend_range * bend) : 1.0;
+	if (bend != bend_x) {
+		bend_f = bend ? powf(2.0, divisor * bend_range * bend) : 1.0;
+		bend_x = bend;
+	}
 }
 
 void Channel::midi_in(uint8_t c, uint8_t d1, uint8_t d2)
