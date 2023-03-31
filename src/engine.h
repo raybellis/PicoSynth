@@ -14,8 +14,8 @@ class Voice {
 
 private:
 	uint8_t					chan;
-	bool					free:1;
-	bool					steal:1;
+	bool					free;
+	bool					steal;
 	uint8_t					note;
 	uint8_t					vel;
 	Oscillator*				osc;
@@ -32,7 +32,8 @@ public:
 class SynthEngine {
 
 private:
-	Voice					voice[64];
+	static const uint8_t	nv = 64;
+	Voice					voice[nv];
 	Channel					channel[16];
 
 private:
