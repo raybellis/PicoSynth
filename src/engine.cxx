@@ -57,7 +57,7 @@ void Voice::note_on(uint8_t _chan, uint8_t _note, uint8_t _vel)
 	dca->gate_on();
 
 	// calculate NCO step value
-	float f = powf(2.0, (note - 69) * (1.0 / 12.0));
+	float f = 440.0 * powf(2.0, (note - 69) * (1.0 / 12.0));
 	step = 0x10000 * wave_len * f * (1.0 / SAMPLE_RATE);
 	pos = 0;
 }
