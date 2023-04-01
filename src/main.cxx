@@ -166,11 +166,11 @@ void keypad_task(void)
 // AUDIO TASK
 //--------------------------------------------------------------------+
 
-int32_t samples[SAMPLE_CHANS * SAMPLES_PER_BUFFER];
+int32_t samples[2 * SAMPLES_PER_BUFFER];
 
 void audio_task(void)
 {
-	for (int i = 0; i < SAMPLE_CHANS * SAMPLES_PER_BUFFER ; ++i) {
+	for (int i = 0; i < 2 * SAMPLES_PER_BUFFER ; ++i) {
 		samples[i] = 0;
 	}
 
@@ -180,7 +180,7 @@ void audio_task(void)
 	struct audio_buffer *buffer = take_audio_buffer(ap, true);
 	int16_t *out = (int16_t *) buffer->buffer->bytes;
 
-	for (auto i = 0U; i < SAMPLE_CHANS * buffer->max_sample_count; ++i) {
+	for (auto i = 0U; i < 2 * buffer->max_sample_count; ++i) {
 		out[i] = samples[i] >> 9;
 	}
 

@@ -1,18 +1,23 @@
 #include <cmath>
 #include <cstdio>
 
-#include "audio.h"
+#include "hardware/interp.h"
+
 #include "engine.h"
-#include "oscillator.h"
+#include "audio.h"
 #include "envelope.h"
 #include "midi.h"
+#include "waves.h"
+
+//--------------------------------------------------------------------+
+// Per-voice state
+//--------------------------------------------------------------------+
 
 void Voice::init()
 {
 	free = true;
 	steal = false;
 	chan = 0xff;
-	osc = nullptr;
 	dca = nullptr;
 }
 
@@ -20,6 +25,52 @@ Voice::Voice()
 {
 	init();
 }
+
+void Voice::update(int16_t* samples, size_t n)
+{
+	// copy voice state to the interpolator
+	interp0->base[0] = step;
+	interp0->base[2] = (uint32_t)wavetable;
+	interp0->accum[0] = pos;
+
+	// generate the samples
+	for (uint i = 0; i < n; ++i) {
+		samples[i] = *(int16_t*)interp0->pop[2];
+	}
+
+	// update voice state
+	pos = interp0->accum[0] & (wave_max - 1);
+}
+
+void Voice::note_on(uint8_t _chan, uint8_t _note, uint8_t _vel)
+{
+	// remember note parameters
+	chan = _chan;
+	note = _note;
+	vel = _vel;
+
+	// determine patch waveform
+	wavetable = waves[chan % 4];
+
+	// set up the envelope
+	dca = new ADSR(30, 20, 80, 20);
+	dca->gate_on();
+
+	// calculate NCO step value
+	float f = powf(2.0, (note - 69) * (1.0 / 12.0));
+	step = 0x10000 * wave_len * f * (1.0 / SAMPLE_RATE);
+	pos = 0;
+}
+
+void Voice::note_off()
+{
+	dca->gate_off();
+	steal = true;		// voice may now be stolen
+}
+
+//--------------------------------------------------------------------+
+// Core synth engine
+//--------------------------------------------------------------------+
 
 SynthEngine::SynthEngine()
 {
@@ -32,7 +83,6 @@ SynthEngine::SynthEngine()
 void SynthEngine::deallocate(Voice& v)
 {
 	delete v.dca;
-	delete v.osc;
 	v.init();
 }
 
@@ -75,7 +125,14 @@ void __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 		}
 	}
 
-	for (const auto& v : voice) {
+	// set up the interpolator
+	interp_config cfg = interp_default_config();
+	interp_config_set_shift(&cfg, 15);
+	interp_config_set_mask(&cfg, 1, wave_shift);
+	interp_config_set_add_raw(&cfg, true);
+	interp_set_config(interp0, 0, &cfg);
+
+	for (auto& v : voice) {
 
 		// voice not in use
 		if (v.free) continue;
@@ -95,14 +152,11 @@ void __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 		dca *= chan.control[volume];			// 29 bits
 		dca >>= 4;								// 25 bits
 
-#if SAMPLE_CHANS == 1
-		uint16_t level = dca >> 9;				// 16 bits
-#else
 		// apply pan and scale back to 16 bits
 		uint16_t level_l = (dca * chan.pan_l) >> 16;
 		uint16_t level_r = (dca * chan.pan_r) >> 16;
-#endif
 
+#if 0
 		// calculate the note frequency based on MIDI note 69 = A440
 		const float divisor = 1 / 12.0;
 		float freq = 440.0 * powf(2.0, divisor * (v.note - 69));
@@ -113,18 +167,15 @@ void __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 		}
 
 		v.osc->set_frequency(freq);
+#endif
 
 		// generate a buffer full of (mono) samples
-		v.osc->update(mono, n);
+		v.update(mono, n);
 
 		// accumulate the samples into the supplied output buffer
 		for (size_t i = 0, j = 0; i < n; ++i) {
-#if SAMPLE_CHANS == 1
-			samples[j++] += (level * mono[i]) >> 16;
-#else
 			samples[j++] += (level_l * mono[i]) >> 16;
 			samples[j++] += (level_r * mono[i]) >> 16;
-#endif
 		}
 	}
 }
@@ -134,27 +185,7 @@ void SynthEngine::note_on(uint8_t chan, uint8_t note, uint8_t vel)
 	auto* vp = allocate();
 	if (vp) {
 		auto& v = *vp;
-		v.chan = chan;
-		v.dca = new ADSR(30, 20, 80, 20);
-		switch (chan % 4) {
-		case 0:
-			v.osc = new SineOscillator();
-			break;
-		case 1:
-			v.osc = new SawtoothOscillator();
-			break;
-		case 2:
-			v.osc = new SineOscillator();
-			break;
-		case 3:
-			v.osc = new SquareOscillator();
-			break;
-		}
-
-		v.note = note;
-		v.vel = vel;
-		v.dca->gate_on();
-		v.osc->sync();	// TODO: defer until note start
+		v.note_on(chan, note, vel);
 	}
 }
 
@@ -163,8 +194,7 @@ void SynthEngine::note_off(uint8_t chan, uint8_t note, uint8_t vel)
 	for (auto& v: voice) {
 		if (v.free) continue;
 		if (v.chan == chan && v.note == note) {
-			v.dca->gate_off();
-			v.steal = true;		// voice may now be stolen
+			v.note_off();
 		}
 	}
 }

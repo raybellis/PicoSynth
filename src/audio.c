@@ -9,12 +9,12 @@ struct audio_buffer_pool *audio_init() {
 	static audio_format_t audio_format = {
 			.format = AUDIO_BUFFER_FORMAT_PCM_S16,
 			.sample_freq = SAMPLE_RATE,
-			.channel_count = SAMPLE_CHANS,
+			.channel_count = 2,
 	};
 
 	static struct audio_buffer_format producer_format = {
 			.format = &audio_format,
-			.sample_stride = 2 * SAMPLE_CHANS
+			.sample_stride = 4
 	};
 
 	struct audio_buffer_pool *producer_pool =

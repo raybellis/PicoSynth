@@ -18,8 +18,8 @@ add_executable(${PROJECT}
 	src/engine.cxx
 	src/channel.cxx
 	src/patch.cxx
-	src/oscillator.cxx
 	src/envelope.cxx
+	src/waves.c
 )
 
 pico_enable_stdio_usb(${PROJECT} 0)
@@ -33,7 +33,6 @@ target_compile_options(${PROJECT} PRIVATE -Wall -Werror -O3)
 target_compile_definitions(${PROJECT} PRIVATE
 	PICO_AUDIO_I2S_MONO_INPUT=0
 	PICO_AUDIO_I2S_MONO_OUTPUT=0
-	SAMPLE_CHANS=2
 	PICO_AUDIO_I2S_DATA_PIN=26
 	PICO_AUDIO_I2S_CLOCK_PIN_BASE=27
 )

@@ -4,8 +4,8 @@
 #include <cstddef>
 
 #include "channel.h"
+#include "waves.h"
 
-class Oscillator;
 class Envelope;
 
 class Voice {
@@ -18,11 +18,16 @@ private:
 	bool					steal;
 	uint8_t					note;
 	uint8_t					vel;
-	Oscillator*				osc;
+	uint32_t				step;
+	uint32_t				pos;
+	int16_t*				wavetable;
 	Envelope*				dca;
 
 private:
 	void					init();
+	void					update(int16_t* samples, size_t n);
+	void					note_on(uint8_t chan, uint8_t note, uint8_t vel);
+	void					note_off();
 
 public:
 							Voice();
