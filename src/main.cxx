@@ -1,7 +1,8 @@
 #include "pico/stdlib.h"
+#include "pico/multicore.h"
+#include "pico/binary_info.h"
 #include "hardware/gpio.h"
 #include "hardware/structs/systick.h"
-#include "pico/binary_info.h"
 #include "pico_rgb_keypad.hpp"
 #include "bsp/board.h"
 #include "tusb.h"
@@ -29,6 +30,7 @@ static audio_buffer_pool *ap = nullptr;
 void led_blinking_task();
 void keypad_task();
 void audio_task();
+void audio_loop();
 void midi_task(uint8_t);
 
 int main() {
@@ -43,6 +45,8 @@ int main() {
 
 	keypad.init();
 	keypad.set_brightness(0.2f);
+
+	// multicore_launch_core1(audio_loop);
 
 	while (1)
 	{
@@ -181,11 +185,18 @@ void audio_task(void)
 	int16_t *out = (int16_t *) buffer->buffer->bytes;
 
 	for (auto i = 0U; i < 2 * buffer->max_sample_count; ++i) {
-		out[i] = samples[i] >> 9;
+		out[i] = samples[i] >> 6;
 	}
 
 	buffer->sample_count = buffer->max_sample_count;
 	give_audio_buffer(ap, buffer);
+}
+
+void audio_loop(void)
+{
+	while (true) {
+		audio_task();
+	}
 }
 
 //--------------------------------------------------------------------+

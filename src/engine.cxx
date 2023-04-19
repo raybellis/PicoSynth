@@ -2,6 +2,7 @@
 #include <cstdio>
 
 #include "hardware/interp.h"
+#include "hardware/divider.h"
 
 #include "engine.h"
 #include "audio.h"
@@ -42,6 +43,45 @@ void Voice::update(int16_t* samples, size_t n)
 	pos = interp0->accum[0] & (wave_max - 1);
 }
 
+#if 1
+extern uint16_t powers[];
+
+static uint32_t __attribute__((noinline)) step_for_note(uint8_t note)
+{
+	// normalize base frequency around MIDI note
+	// range 57 - 80, i.e. A3 -> A4 (440Hz) -> B5
+	uint32_t f = 440;
+	while (note > 80) {
+		f <<= 1;
+		note -= 12;
+	}
+	while (note < 57) {
+		f >>= 1;
+		note += 12;
+	}
+
+	// calculate offset into the 16k entry powers table
+	hw_divider_divmod_s32_start((note - 69) * 8192, 12);
+
+	auto res = hw_divider_result_wait();
+	uint16_t offset = 8192 + to_quotient_s32(res);
+
+	// adjust the frequency - NB: goes out of Hz scale
+	f *= powers[offset];		// Hz * (1 << 15)
+
+	// we'll needed f * 0x10000 anyway, so one more shift does that
+	f <<= 1;					// Hz * (1 << 16)
+
+	return wave_len * (f * (1.0 / SAMPLE_RATE));
+}
+#else
+static uint32_t __attribute__((noinline)) step_for_note(uint8_t note)
+{
+	float f = 440.0 * powf(2.0, (note - 69) * (1.0 / 12.0));
+	return 0x10000 * wave_len * f * (1.0 / SAMPLE_RATE);
+}
+#endif
+
 void Voice::note_on(uint8_t _chan, uint8_t _note, uint8_t _vel)
 {
 	// remember note parameters
@@ -56,9 +96,8 @@ void Voice::note_on(uint8_t _chan, uint8_t _note, uint8_t _vel)
 	dca = new ADSR(30, 20, 80, 20);
 	dca->gate_on();
 
-	// calculate NCO step value
-	float f = 440.0 * powf(2.0, (note - 69) * (1.0 / 12.0));
-	step = 0x10000 * wave_len * f * (1.0 / SAMPLE_RATE);
+	// setup NCO
+	step = step_for_note(note);
 	pos = 0;
 }
 

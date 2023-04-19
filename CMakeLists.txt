@@ -20,6 +20,7 @@ add_executable(${PROJECT}
 	src/patch.cxx
 	src/envelope.cxx
 	src/waves.c
+	src/powers.c
 )
 
 pico_enable_stdio_usb(${PROJECT} 0)
@@ -41,6 +42,7 @@ include(${PIMORONI_PICO_PATH}/libraries/pico_rgb_keypad/pico_rgb_keypad.cmake)
 
 target_link_libraries(${PROJECT} PRIVATE
 	pico_stdlib
+	pico_multicore
 	pico_audio_i2s
 	hardware_interp
 	pico_rgb_keypad
