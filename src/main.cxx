@@ -1,6 +1,7 @@
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
 #include "pico/binary_info.h"
+#include "pico/util/queue.h"
 #include "hardware/gpio.h"
 #include "hardware/structs/systick.h"
 #include "pico_rgb_keypad.hpp"
@@ -26,6 +27,7 @@ static uint32_t blink_interval_ms = BLINK_NOT_MOUNTED;
 const uint LED_PIN = PICO_DEFAULT_LED_PIN;
 static bool led_state = false;
 static audio_buffer_pool *ap = nullptr;
+static queue_t midi_queue;
 
 void led_blinking_task();
 void keypad_task();
@@ -46,7 +48,8 @@ int main() {
 	keypad.init();
 	keypad.set_brightness(0.2f);
 
-	// multicore_launch_core1(audio_loop);
+	queue_init(&midi_queue, 4, 64);
+	multicore_launch_core1(audio_loop);
 
 	while (1)
 	{
@@ -56,7 +59,6 @@ int main() {
 #if !USE_MIDI_CALLBACK
 		midi_task(0);
 #endif
-		audio_task();
 	}
 }
 
@@ -68,7 +70,8 @@ static void process_packet(uint8_t *packet)
 	uint8_t cable = packet[0] & 0xf0;
 	if (cable != 0) return;
 
-	engine.midi_in(packet[1], packet[2], packet[3]);
+	queue_add_blocking(&midi_queue, packet);
+	// engine.midi_in(packet[1], packet[2], packet[3]);
 }
 
 //--------------------------------------------------------------------+
@@ -195,6 +198,10 @@ void audio_task(void)
 void audio_loop(void)
 {
 	while (true) {
+		uint8_t msg[4];
+		while (queue_try_remove(&midi_queue, msg)) {
+			engine.midi_in(msg[1], msg[2], msg[3]);
+		}
 		audio_task();
 	}
 }
