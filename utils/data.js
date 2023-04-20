@@ -41,7 +41,7 @@ out(`#include <stdint.h>
 
 generate("note_table", 128, 'uint32_t', 8, i=> {
 	const f = 440.0 * Math.pow(2.0, (i - 69) / 12);
-	return wave_len * 0x10000 * 440.0 * Math.pow(2.0, (i - 69) / 12) / sample_rate
+	return 0x10000 * wave_len * f / sample_rate;
 });
 
 generate("pan_table", 128, 'uint8_t', 2,

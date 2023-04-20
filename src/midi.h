@@ -1,6 +1,6 @@
 #pragma once
 
-#include <cstddef>
+#include <cstdint>
 
 enum CC : uint8_t {
 	volume		= 7,
