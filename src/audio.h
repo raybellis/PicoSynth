@@ -1,9 +1,7 @@
 #pragma once
 
 #include "pico/audio_i2s.h"
-
-#define SAMPLE_RATE 44100
-#define SAMPLES_PER_BUFFER 256
+#include "settings.h"
 
 #ifdef __cplusplus
 extern "C" {

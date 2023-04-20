@@ -126,7 +126,7 @@ Voice* SynthEngine::allocate()
 }
 
 // temporary buffer of mono samples
-static int16_t mono[SAMPLES_PER_BUFFER];
+static int16_t mono[BUFFER_SIZE];
 
 void __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 {

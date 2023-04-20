@@ -7,10 +7,9 @@
 #include "pico_rgb_keypad.hpp"
 #include "bsp/board.h"
 #include "tusb.h"
+
 #include "audio.h"
 #include "engine.h"
-
-#include <stdfix.h>
 
 #define USE_MIDI_CALLBACK 0
 
@@ -29,38 +28,9 @@ static bool led_state = false;
 static audio_buffer_pool *ap = nullptr;
 static queue_t midi_queue;
 
-void led_blinking_task();
-void keypad_task();
-void audio_task();
-void audio_loop();
-void midi_task(uint8_t);
-
-int main() {
-
-    systick_hw->rvr = 0xffffff;
-    systick_hw->csr = 0x5;
-
-	stdio_init_all();
-	board_init();
-	tusb_init();
-	ap = audio_init();
-
-	keypad.init();
-	keypad.set_brightness(0.2f);
-
-	queue_init(&midi_queue, 4, 64);
-	multicore_launch_core1(audio_loop);
-
-	while (1)
-	{
-		tud_task();
-		led_blinking_task();
-		keypad_task();
-#if !USE_MIDI_CALLBACK
-		midi_task(0);
-#endif
-	}
-}
+//--------------------------------------------------------------------+
+// MIDI packet dispatch
+//--------------------------------------------------------------------+
 
 static void process_packet(uint8_t *packet)
 {
@@ -71,7 +41,6 @@ static void process_packet(uint8_t *packet)
 	if (cable != 0) return;
 
 	queue_add_blocking(&midi_queue, packet);
-	// engine.midi_in(packet[1], packet[2], packet[3]);
 }
 
 //--------------------------------------------------------------------+
@@ -173,16 +142,16 @@ void keypad_task(void)
 // AUDIO TASK
 //--------------------------------------------------------------------+
 
-int32_t samples[2 * SAMPLES_PER_BUFFER];
+int32_t samples[2 * BUFFER_SIZE];
 
 void audio_task(void)
 {
-	for (int i = 0; i < 2 * SAMPLES_PER_BUFFER ; ++i) {
+	for (int i = 0; i < 2 * BUFFER_SIZE ; ++i) {
 		samples[i] = 0;
 	}
 
 	// get samples from the synth engine
-	engine.update(samples, SAMPLES_PER_BUFFER);
+	engine.update(samples, BUFFER_SIZE);
 
 	struct audio_buffer *buffer = take_audio_buffer(ap, true);
 	int16_t *out = (int16_t *) buffer->buffer->bytes;
@@ -207,9 +176,8 @@ void audio_loop(void)
 }
 
 //--------------------------------------------------------------------+
-// BLINKING TASK
+// LED handler
 //--------------------------------------------------------------------+
-
 void led_blinking_task(void)
 {
 	static uint32_t start_ms = 0;
@@ -220,4 +188,35 @@ void led_blinking_task(void)
 
 	board_led_write(led_state);
 	led_state = 1 - led_state; // toggle
+}
+
+//--------------------------------------------------------------------+
+// Program startup
+//--------------------------------------------------------------------+
+
+int main() {
+
+    systick_hw->rvr = 0xffffff;
+    systick_hw->csr = 0x5;
+
+	stdio_init_all();
+	board_init();
+	tusb_init();
+	ap = audio_init();
+
+	keypad.init();
+	keypad.set_brightness(0.2f);
+
+	queue_init(&midi_queue, 4, 64);
+	multicore_launch_core1(audio_loop);
+
+	while (1)
+	{
+		tud_task();
+		led_blinking_task();
+		keypad_task();
+#if !USE_MIDI_CALLBACK
+		midi_task(0);
+#endif
+	}
 }

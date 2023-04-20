@@ -1,6 +1,3 @@
-#include <stdio.h>
-#include <math.h>
-
 #include "pico/stdlib.h"
 #include "audio.h"
 
@@ -18,7 +15,7 @@ struct audio_buffer_pool *audio_init() {
 	};
 
 	struct audio_buffer_pool *producer_pool =
-		audio_new_producer_pool(&producer_format, 3, SAMPLES_PER_BUFFER);
+		audio_new_producer_pool(&producer_format, 3, BUFFER_SIZE);
 	bool __unused ok;
 	const struct audio_format *output_format;
 
