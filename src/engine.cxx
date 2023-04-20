@@ -1,3 +1,5 @@
+#include <cstdio>
+
 #include "hardware/interp.h"
 #include "hardware/divider.h"
 
@@ -60,12 +62,11 @@ void Voice::note_on(uint8_t _chan, uint8_t _note, uint8_t _vel)
 	dca_env = new ADSR(30, 20, 80, 20);
 	dca_env->gate_on();
 
-#if 0
 	if (chan == 1) {
-		dco_env = new ADSR(8, 8, 0, 0);
 		dco_env_level = 127;
+		dco_env = new ADSR(127, 40, 0, 0);
+		dco_env->gate_on();
 	}
-#endif
 
 	// setup NCO
 	step_base = note_table[note];
@@ -182,18 +183,16 @@ void __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 			v.step = ((uint64_t)v.step * chan.bend_f) >> 15;
 		}
 
-#if 0
 		// apply the DCO envelope
 		if (v.dco_env && v.dco_env_level) {
 			int32_t env = v.dco_env->level();	// 16 bits
-			if (env) {
-				env = (env >> 2) + 8192;		// 14 bits
-				env = env * v.dco_env_level;	// 22 bits
-				env >>= 8;						// 14 bits
+			if (true || env) {
+				env = env * v.dco_env_level;	// 24 bits
+				env = (env >> 10) + 8192;		// 14 bits
+//printf("%ld\n", env);
 				v.step = ((uint64_t)v.step * power_table[env]) >> 15;
 			}
 		}
-#endif
 
 		// generate a buffer full of (mono) samples
 		v.update(mono, n);

@@ -11,6 +11,16 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
 pico_sdk_init()
 
+execute_process(COMMAND
+	./utils/data.js
+	WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+)
+
+execute_process(COMMAND
+	./utils/waves.js
+	WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+)
+
 add_executable(${PROJECT}
 	src/main.cxx
 	src/usb_descriptors.c
