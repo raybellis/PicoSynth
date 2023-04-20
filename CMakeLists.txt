@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.13)
+cmake_minimum_required(VERSION 3.19)
 set(PROJECT PicoSynth)
 
 include(pico_sdk_import.cmake)
@@ -17,14 +17,11 @@ set(CONFIG_SAMPLE_RATE 44100)
 set(CONFIG_WAVE_SHIFT  11)
 set(CONFIG_BUFFER_SIZE 256)
 
-execute_process(COMMAND
-	./utils/data.js ${CONFIG_SAMPLE_RATE} ${CONFIG_WAVE_SHIFT} ${CONFIG_BUFFER_SIZE}
+execute_process(
+	COMMAND ./utils/data.js ${CONFIG_SAMPLE_RATE} ${CONFIG_WAVE_SHIFT} ${CONFIG_BUFFER_SIZE}
+	COMMAND ./utils/waves.js
 	WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
-)
-
-execute_process(COMMAND
-	./utils/waves.js
-	WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+	COMMAND_ERROR_IS_FATAL ANY
 )
 
 add_executable(${PROJECT}

@@ -8,3 +8,6 @@ generated
 pico-sdk
 pico_extras
 pioasm
+src/settings.h
+src/data.c
+src/waves.c
