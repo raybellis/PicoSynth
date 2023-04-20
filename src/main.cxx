@@ -11,8 +11,6 @@
 #include "audio.h"
 #include "engine.h"
 
-#define USE_MIDI_CALLBACK 0
-
 enum	{
 	BLINK_NOT_MOUNTED = 250,
 	BLINK_MOUNTED = 1000,
@@ -79,11 +77,7 @@ void tud_resume_cb(void)
 // MIDI RX task
 //--------------------------------------------------------------------+
 
-#if USE_MIDI_CALLBACK == 1
 void tud_midi_rx_cb(uint8_t itf)
-#else
-void midi_task(uint8_t itf)
-#endif
 {
 	uint8_t packet[4];
 
@@ -139,7 +133,7 @@ void keypad_task(void)
 }
 
 //--------------------------------------------------------------------+
-// AUDIO TASK
+// Audio Task
 //--------------------------------------------------------------------+
 
 int32_t samples[2 * BUFFER_SIZE];
@@ -215,8 +209,5 @@ int main() {
 		tud_task();
 		led_blinking_task();
 		keypad_task();
-#if !USE_MIDI_CALLBACK
-		midi_task(0);
-#endif
 	}
 }
