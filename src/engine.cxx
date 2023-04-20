@@ -137,7 +137,6 @@ void __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 
 		// get a reference to the channel parameters
 		assert(v.chan < 0x10);
-
 		auto& chan = channel[v.chan];
 
 		// get the 15-bit DCA level
@@ -150,7 +149,7 @@ void __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 		dca *= chan.control[volume];			// 29 bits
 		dca >>= 4;								// 25 bits
 
-		// apply pan and scale back to 16 bits
+		// apply 7-bit pan and scale back to 16 bits
 		uint16_t level_l = (dca * chan.pan_l) >> 16;
 		uint16_t level_r = (dca * chan.pan_r) >> 16;
 
