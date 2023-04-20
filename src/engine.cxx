@@ -7,6 +7,8 @@
 #include "midi.h"
 #include "waves.h"
 
+extern int16_t power_table[];
+
 //--------------------------------------------------------------------+
 // Per-voice state
 //--------------------------------------------------------------------+
@@ -16,7 +18,9 @@ void Voice::init()
 	free = true;
 	steal = false;
 	chan = 0xff;
-	dca = nullptr;
+	dca_env = nullptr;
+	dco_env = nullptr;
+	dco_env_level = 0;
 }
 
 Voice::Voice()
@@ -52,9 +56,16 @@ void Voice::note_on(uint8_t _chan, uint8_t _note, uint8_t _vel)
 	// determine patch waveform
 	wavetable = waves[chan % 4];
 
-	// set up the envelope
-	dca = new ADSR(30, 20, 80, 20);
-	dca->gate_on();
+	// set up the DCA envelope
+	dca_env = new ADSR(30, 20, 80, 20);
+	dca_env->gate_on();
+
+#if 0
+	if (chan == 1) {
+		dco_env = new ADSR(8, 8, 0, 0);
+		dco_env_level = 127;
+	}
+#endif
 
 	// setup NCO
 	step_base = note_table[note];
@@ -63,7 +74,12 @@ void Voice::note_on(uint8_t _chan, uint8_t _note, uint8_t _vel)
 
 void Voice::note_off()
 {
-	dca->gate_off();
+	dca_env->gate_off();
+
+	if (dco_env) {
+		dco_env->gate_off();
+	}
+
 	steal = true;		// voice may now be stolen
 }
 
@@ -81,7 +97,8 @@ SynthEngine::SynthEngine()
 
 void SynthEngine::deallocate(Voice& v)
 {
-	delete v.dca;
+	delete v.dca_env;
+	delete v.dco_env;
 	v.init();
 }
 
@@ -112,14 +129,20 @@ static int16_t mono[SAMPLES_PER_BUFFER];
 
 void __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 {
-	// update all DCAs, and release any voice
+	// update all envelopes and release any voice
 	// that now has an inactive DCA
 	for (auto& v: voice) {
 		if (v.free) continue;
 
-		v.dca->update();
-		if (!v.dca->active()) {
+		v.dca_env->update();
+		if (!v.dca_env->active()) {
 			deallocate(v);
+			continue;
+		}
+
+		// update DCO envelope
+		if (v.dco_env_level && v.dco_env) {
+			v.dco_env->update();
 		}
 	}
 
@@ -140,7 +163,7 @@ void __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 		auto& chan = channel[v.chan];
 
 		// get the 15-bit DCA level
-		uint32_t dca = v.dca->level();
+		uint32_t dca = v.dca_env->level();
 
 		// scale the DCA by the 7-bit note velocity
 		dca *= v.vel;							// 22 bits
@@ -158,6 +181,19 @@ void __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 		if (chan.bend) {
 			v.step = ((uint64_t)v.step * chan.bend_f) >> 15;
 		}
+
+#if 0
+		// apply the DCO envelope
+		if (v.dco_env && v.dco_env_level) {
+			int32_t env = v.dco_env->level();	// 16 bits
+			if (env) {
+				env = (env >> 2) + 8192;		// 14 bits
+				env = env * v.dco_env_level;	// 22 bits
+				env >>= 8;						// 14 bits
+				v.step = ((uint64_t)v.step * power_table[env]) >> 15;
+			}
+		}
+#endif
 
 		// generate a buffer full of (mono) samples
 		v.update(mono, n);

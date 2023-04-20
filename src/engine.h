@@ -22,7 +22,9 @@ private:
 	uint32_t				step;
 	uint32_t				pos;
 	int16_t*				wavetable;
-	Envelope*				dca;
+	uint8_t					dco_env_level;
+	Envelope*				dca_env;
+	Envelope*				dco_env;
 
 private:
 	void					init();
