@@ -1,6 +1,3 @@
-#include <cmath>
-#include <cstdio>
-
 #include "hardware/interp.h"
 #include "hardware/divider.h"
 
@@ -43,11 +40,13 @@ void Voice::update(int16_t* samples, size_t n)
 	pos = interp0->accum[0] & (wave_max - 1);
 }
 
-#if 1
-extern uint16_t powers[];
-
+// calculate this using a power table:
+//   float f = 440.0 * powf(2.0, (note - 69) * (1.0 / 12.0));
+//   step = 0x10000 * wave_len * f * (1.0 / SAMPLE_RATE);
 static uint32_t __attribute__((noinline)) step_for_note(uint8_t note)
 {
+	extern uint16_t powers[];
+
 	// normalize base frequency around MIDI note
 	// range 57 - 80, i.e. A3 -> A4 (440Hz) -> B5
 	uint32_t f = 440;
@@ -72,15 +71,8 @@ static uint32_t __attribute__((noinline)) step_for_note(uint8_t note)
 	// we'll needed f * 0x10000 anyway, so one more shift does that
 	f <<= 1;					// Hz * (1 << 16)
 
-	return wave_len * (f * (1.0 / SAMPLE_RATE));
+	return f * ((float)wave_len / SAMPLE_RATE);
 }
-#else
-static uint32_t __attribute__((noinline)) step_for_note(uint8_t note)
-{
-	float f = 440.0 * powf(2.0, (note - 69) * (1.0 / 12.0));
-	return 0x10000 * wave_len * f * (1.0 / SAMPLE_RATE);
-}
-#endif
 
 void Voice::note_on(uint8_t _chan, uint8_t _note, uint8_t _vel)
 {
@@ -97,7 +89,7 @@ void Voice::note_on(uint8_t _chan, uint8_t _note, uint8_t _vel)
 	dca->gate_on();
 
 	// setup NCO
-	step = step_for_note(note);
+	step_base = step_for_note(note);
 	pos = 0;
 }
 
@@ -144,7 +136,6 @@ Voice* SynthEngine::allocate()
 		}
 	}
 
-	putchar('X');
 	return nullptr;
 }
 
@@ -195,18 +186,11 @@ void __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 		uint16_t level_l = (dca * chan.pan_l) >> 16;
 		uint16_t level_r = (dca * chan.pan_r) >> 16;
 
-#if 0
-		// calculate the note frequency based on MIDI note 69 = A440
-		const float divisor = 1 / 12.0;
-		float freq = 440.0 * powf(2.0, divisor * (v.note - 69));
-
-		// get the pitch bend multiplier (in floating-point octaves)
+		// scale the NCO step by the current pitchbend amount
+		v.step = v.step_base;
 		if (chan.bend) {
-			freq *= chan.bend_f;
+			v.step = ((uint64_t)v.step * chan.bend_f) >> 15;
 		}
-
-		v.osc->set_frequency(freq);
-#endif
 
 		// generate a buffer full of (mono) samples
 		v.update(mono, n);

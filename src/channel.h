@@ -22,7 +22,7 @@ private:					// state mirroring MIDI values
 	uint8_t					prognum;
 
 private:					// calculated state
-	float					bend_f;
+	uint16_t				bend_f;
 	uint8_t					pan_l;
 	uint8_t					pan_r;
 

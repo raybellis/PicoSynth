@@ -1,5 +1,6 @@
-#include <cstdio>
 #include <cmath>
+
+#include "hardware/divider.h"
 #include "channel.h"
 #include "midi.h"
 
@@ -33,11 +34,18 @@ void Channel::update_cc(uint8_t cc, uint8_t v)
 
 void Channel::update_bend(uint8_t lsb, uint8_t msb)
 {
+	extern int16_t powers[];
 	static int16_t bend_x = 0x8000;				// impossible value
-	const float divisor = 1.0 / (12 * 8192);	// fractions of an octave
 	bend = (int16_t)((msb << 7) | lsb) - 8192;
+
+	// calculate frequency scaling amount if changed
 	if (bend != bend_x) {
-		bend_f = bend ? powf(2.0, divisor * bend_range * bend) : 1.0;
+
+		hw_divider_divmod_s32_start(bend * bend_range, 12);
+		auto res = hw_divider_result_wait();
+		uint16_t offset = 8192 + to_quotient_s32(res);
+
+		bend_f = powers[offset];
 		bend_x = bend;
 	}
 }

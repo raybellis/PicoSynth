@@ -18,6 +18,7 @@ private:
 	bool					steal;
 	uint8_t					note;
 	uint8_t					vel;
+	uint32_t				step_base;
 	uint32_t				step;
 	uint32_t				pos;
 	int16_t*				wavetable;
