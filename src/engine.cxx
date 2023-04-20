@@ -45,32 +45,8 @@ void Voice::update(int16_t* samples, size_t n)
 //   step = 0x10000 * wave_len * f * (1.0 / SAMPLE_RATE);
 static uint32_t __attribute__((noinline)) step_for_note(uint8_t note)
 {
-	extern uint16_t powers[];
-
-	// normalize base frequency around MIDI note
-	// range 57 - 80, i.e. A3 -> A4 (440Hz) -> B5
-	uint32_t f = 440;
-	while (note > 80) {
-		f <<= 1;
-		note -= 12;
-	}
-	while (note < 57) {
-		f >>= 1;
-		note += 12;
-	}
-
-	// calculate offset into the 16k entry powers table
-	hw_divider_divmod_s32_start((note - 69) * 8192, 12);
-
-	auto res = hw_divider_result_wait();
-	uint16_t offset = 8192 + to_quotient_s32(res);
-
-	// adjust the frequency - NB: goes out of Hz scale
-	f *= powers[offset];		// Hz * (1 << 15)
-
-	// we'll needed f * 0x10000 anyway, so one more shift does that
-	f <<= 1;					// Hz * (1 << 16)
-
+	extern uint32_t note_table[];
+	uint32_t f = note_table[note];
 	return f * ((float)wave_len / SAMPLE_RATE);
 }
 

@@ -19,8 +19,8 @@ add_executable(${PROJECT}
 	src/channel.cxx
 	src/patch.cxx
 	src/envelope.cxx
+	src/data.c
 	src/waves.c
-	src/powers.c
 )
 
 pico_enable_stdio_usb(${PROJECT} 0)
