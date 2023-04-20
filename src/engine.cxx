@@ -40,18 +40,10 @@ void Voice::update(int16_t* samples, size_t n)
 	pos = interp0->accum[0] & (wave_max - 1);
 }
 
-// calculate this using a power table:
-//   float f = 440.0 * powf(2.0, (note - 69) * (1.0 / 12.0));
-//   step = 0x10000 * wave_len * f * (1.0 / SAMPLE_RATE);
-static uint32_t __attribute__((noinline)) step_for_note(uint8_t note)
-{
-	extern uint32_t note_table[];
-	uint32_t f = note_table[note];
-	return f * ((float)wave_len / SAMPLE_RATE);
-}
-
 void Voice::note_on(uint8_t _chan, uint8_t _note, uint8_t _vel)
 {
+	extern uint32_t note_table[];
+
 	// remember note parameters
 	chan = _chan;
 	note = _note;
@@ -65,7 +57,7 @@ void Voice::note_on(uint8_t _chan, uint8_t _note, uint8_t _vel)
 	dca->gate_on();
 
 	// setup NCO
-	step_base = step_for_note(note);
+	step_base = note_table[note];
 	pos = 0;
 }
 
