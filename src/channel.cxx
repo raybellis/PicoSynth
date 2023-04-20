@@ -25,7 +25,6 @@ void Channel::update_cc(uint8_t cc, uint8_t v)
 
 void Channel::update_bend(uint8_t lsb, uint8_t msb)
 {
-	static int16_t bend_x = 0x8000;				// impossible value
 	bend = (int16_t)((msb << 7) | lsb) - 8192;
 
 	// calculate frequency scaling amount if changed

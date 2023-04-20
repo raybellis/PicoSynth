@@ -22,6 +22,9 @@ private:					// calculated state
 	uint8_t					pan_l;
 	uint8_t					pan_r;
 
+private:					// cached state
+	uint16_t				bend_x = 0xffff;
+
 public:
 							Channel();
 
