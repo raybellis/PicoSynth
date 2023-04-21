@@ -1,9 +1,9 @@
 cmake_minimum_required(VERSION 3.19)
 set(PROJECT PicoSynth)
 
-include(pico_sdk_import.cmake)
-include(pico_extras_import.cmake)
-include(pimoroni_pico_import.cmake)
+include(../pico-sdk/external/pico_sdk_import.cmake)
+include(../pico-extras/external/pico_extras_import.cmake)
+include(../pimoroni-pico/pimoroni_pico_import.cmake)
 
 project(${PROJECT} C CXX ASM)
 
@@ -39,6 +39,12 @@ add_executable(${PROJECT}
 pico_enable_stdio_usb(${PROJECT} 0)
 pico_enable_stdio_uart(${PROJECT} 1)
 
+include(common/pimoroni_bus)
+include(libraries/pico_display/pico_display)
+include(libraries/pico_graphics/pico_graphics)
+include(drivers/rgbled/rgbled)
+include(drivers/st7789/st7789)
+
 target_include_directories(${PROJECT} PRIVATE ${CMAKE_CURRENT_LIST_DIR})
 target_include_directories(${PROJECT} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
@@ -58,6 +64,12 @@ target_link_libraries(${PROJECT} PRIVATE
 	hardware_interp
 	tinyusb_device
 	tinyusb_board
+	pico_display
+	hardware_spi
+	hardware_pwm
+	pico_graphics
+	st7789
+	rgbled
 )
 
 pico_add_extra_outputs(${PROJECT})

@@ -3,6 +3,8 @@ CMakeFiles
 Makefile
 PicoSynth.*
 cmake_install.cmake
+*.h
+*.a
 elf2uf2
 generated
 pico-sdk
@@ -11,3 +13,4 @@ pioasm
 src/settings.h
 src/data.c
 src/waves.c
+test.mid
