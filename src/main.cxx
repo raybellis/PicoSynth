@@ -4,7 +4,6 @@
 #include "pico/util/queue.h"
 #include "hardware/gpio.h"
 #include "hardware/structs/systick.h"
-#include "pico_rgb_keypad.hpp"
 #include "bsp/board.h"
 #include "tusb.h"
 
@@ -17,7 +16,6 @@ enum	{
 	BLINK_SUSPENDED = 2500,
 };
 
-pimoroni::PicoRGBKeypad keypad;
 SynthEngine engine;
 
 static uint32_t blink_interval_ms = BLINK_NOT_MOUNTED;
@@ -89,50 +87,6 @@ void tud_midi_rx_cb(uint8_t itf)
 }
 
 //--------------------------------------------------------------------+
-// Keyboard Task
-//--------------------------------------------------------------------+
-
-uint16_t prev = 0;
-uint16_t pressed = 0;
-uint8_t packet[4];
-
-void keypad_task(void)
-{
-	pressed = keypad.get_button_states();
-	auto changed = pressed ^ prev;
-	if (!changed) {
-		return;
-	}
-
-	uint16_t mask = 1;
-	for (auto i = 0U; i < 16; ++i, mask <<= 1) {
-		if (changed & mask) {
-			if (pressed & mask) {
-				packet[0] = 0x09;
-				packet[1] = 0x90;
-				packet[2] = 60 + i;
-				packet[3] = 100;
-				tud_midi_n_packet_write(0, packet);
-				process_packet(packet);
-				keypad.illuminate(i, 0xff - (i << 4), i << 4, 0);
-			} else if (prev & mask) {
-				packet[0] = 0x08;
-				packet[1] = 0x80;
-				packet[2] = 60 + i;
-				packet[3] = 100;
-				tud_midi_n_packet_write(0, packet);
-				process_packet(packet);
-				keypad.illuminate(i, 0, 0, 0);
-			}
-		}
-	}
-
-	keypad.update();
-
-	prev = pressed;
-}
-
-//--------------------------------------------------------------------+
 // Audio Task
 //--------------------------------------------------------------------+
 
@@ -198,9 +152,6 @@ int main() {
 	tusb_init();
 	ap = audio_init();
 
-	keypad.init();
-	keypad.set_brightness(0.2f);
-
 	queue_init(&midi_queue, 4, 64);
 	multicore_launch_core1(audio_loop);
 
@@ -208,6 +159,5 @@ int main() {
 	{
 		tud_task();
 		led_blinking_task();
-		keypad_task();
 	}
 }
