@@ -19,10 +19,10 @@ void Voice::init()
 {
 	free = true;
 	steal = false;
-	chan = 0xff;
+	channel = nullptr;
+	patch = nullptr;
 	dca_env = nullptr;
 	dco_env = nullptr;
-	dco_env_level = 0;
 }
 
 Voice::Voice()
@@ -34,7 +34,7 @@ void Voice::update(int16_t* samples, size_t n)
 {
 	// copy voice state to the interpolator
 	interp0->base[0] = step;
-	interp0->base[2] = (uint32_t)wavetable;
+	interp0->base[2] = (uint32_t)waves[patch->wavenum];
 	interp0->accum[0] = pos;
 
 	// generate the samples
@@ -51,20 +51,18 @@ void Voice::note_on(uint8_t _chan, uint8_t _note, uint8_t _vel)
 	extern uint32_t note_table[];
 
 	// remember note parameters
-	chan = _chan;
 	note = _note;
 	vel = _vel;
 
-	// determine patch waveform
-	wavetable = waves[chan % 4];
+	// load the current patch parameters
+	auto& p = *patch;
 
 	// set up the DCA envelope
-	dca_env = new ADSR(30, 20, 80, 20);
+	dca_env = new ADSR(p.dca_env_a, p.dca_env_d, p.dca_env_s, p.dca_env_r);
 	dca_env->gate_on();
 
-	if (chan == 1) {
-		dco_env_level = 127;
-		dco_env = new ADSR(127, 40, 0, 0);
+	if (p.dco_env_level) {
+		dco_env = new ADSR(p.dco_env_a, p.dco_env_d, p.dco_env_s, p.dco_env_r);
 		dco_env->gate_on();
 	}
 
@@ -93,6 +91,11 @@ SynthEngine::SynthEngine()
 	// all voices start out unused
 	for (auto& v : voice) {
 		v.init();
+	}
+
+	// set all channels to a default preset
+	for (uint8_t c = 0; c < 16; ++c) {
+		midi_in(0xc0 + c, c, 0);
 	}
 }
 
@@ -141,8 +144,11 @@ void __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 			continue;
 		}
 
+		// get a reference to the current note's patch
+		auto& p = *v.patch;
+
 		// update DCO envelope
-		if (v.dco_env_level && v.dco_env) {
+		if (p.dco_env_level && v.dco_env) {
 			v.dco_env->update();
 		}
 	}
@@ -161,7 +167,10 @@ void __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 
 		// get a reference to the channel parameters
 		assert(v.chan < 0x10);
-		auto& chan = channel[v.chan];
+		auto& chan = *v.channel;
+
+		// and a reference to the current note's patch
+		auto& p = *v.patch;
 
 		// get the 15-bit DCA level
 		uint32_t dca = v.dca_env->level();
@@ -184,10 +193,10 @@ void __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 		}
 
 		// apply the DCO envelope
-		if (v.dco_env && v.dco_env_level) {
+		if (v.dco_env && p.dco_env_level) {
 			int32_t env = v.dco_env->level();	// 16 bits
 			if (true || env) {
-				env = env * v.dco_env_level;	// 24 bits
+				env = env * p.dco_env_level;	// 24 bits
 				env = (env >> 10) + 8192;		// 14 bits
 //printf("%ld\n", env);
 				v.step = ((uint64_t)v.step * power_table[env]) >> 15;
@@ -210,15 +219,18 @@ void SynthEngine::note_on(uint8_t chan, uint8_t note, uint8_t vel)
 	auto* vp = allocate();
 	if (vp) {
 		auto& v = *vp;
+		v.channel = &channel[chan];
+		v.patch = &presets[v.channel->program % 4];
 		v.note_on(chan, note, vel);
 	}
 }
 
 void SynthEngine::note_off(uint8_t chan, uint8_t note, uint8_t vel)
 {
+	Channel* c = &channel[chan];
 	for (auto& v: voice) {
 		if (v.free) continue;
-		if (v.chan == chan && v.note == note) {
+		if (v.channel == c && v.note == note) {
 			v.note_off();
 		}
 	}

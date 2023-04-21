@@ -7,12 +7,17 @@
 Channel::Channel() :
 	control{0, }
 {
-	update_cc(volume, 127);
-	update_cc(pan, 64);
-	update_bend(0, 64);
+	set_cc(volume, 127);
+	set_cc(pan, 64);
+	set_bend(0, 64);
 }
 
-void Channel::update_cc(uint8_t cc, uint8_t v)
+void Channel::set_program(uint8_t n)
+{
+	program = n;
+}
+
+void Channel::set_cc(uint8_t cc, uint8_t v)
 {
 	control[cc] = v;
 
@@ -23,7 +28,7 @@ void Channel::update_cc(uint8_t cc, uint8_t v)
 	}
 }
 
-void Channel::update_bend(uint8_t lsb, uint8_t msb)
+void Channel::set_bend(uint8_t lsb, uint8_t msb)
 {
 	bend = (int16_t)((msb << 7) | lsb) - 8192;
 
@@ -44,17 +49,17 @@ void Channel::midi_in(uint8_t c, uint8_t d1, uint8_t d2)
 {
 	uint8_t cmd = c >> 4;
 	switch (cmd) {
-		case 0xb:
-			update_cc(d1, d2);
+		case 0xb: // continuous controller
+			set_cc(d1, d2);
 			break;
-		case 0xc:
-			// program change
+		case 0xc: // program change
+			set_program(d1);
 			break;
-		case 0xd:
+		case 0xd: // channel pressure
 			pressure = d1;
 			break;
-		case 0xe:
-			update_bend(d1, d2);
+		case 0xe: // pitch bend
+			set_bend(d1, d2);
 			break;
 	}
 }

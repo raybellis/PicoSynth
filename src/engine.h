@@ -4,6 +4,7 @@
 #include <cstddef>
 
 #include "channel.h"
+#include "patch.h"
 #include "waves.h"
 
 class Envelope;
@@ -13,7 +14,6 @@ class Voice {
 	friend class			SynthEngine;
 
 private:
-	uint8_t					chan;
 	bool					free;
 	bool					steal;
 	uint8_t					note;
@@ -21,8 +21,8 @@ private:
 	uint32_t				step_base;
 	uint32_t				step;
 	uint32_t				pos;
-	int16_t*				wavetable;
-	uint8_t					dco_env_level;
+	Channel*				channel;
+	Patch*					patch;
 	Envelope*				dca_env;
 	Envelope*				dco_env;
 

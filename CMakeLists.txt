@@ -30,8 +30,8 @@ add_executable(${PROJECT}
 	src/audio.c
 	src/engine.cxx
 	src/channel.cxx
-	src/patch.cxx
 	src/envelope.cxx
+	src/presets.c
 	src/data.c
 	src/waves.c
 )
