@@ -61,6 +61,7 @@ void Voice::note_on(uint8_t _chan, uint8_t _note, uint8_t _vel)
 	dca_env = new ADSR(p.dca_env_a, p.dca_env_d, p.dca_env_s, p.dca_env_r);
 	dca_env->gate_on();
 
+	// set up the DCO envelope
 	if (p.dco_env_level) {
 		dco_env = new ADSR(p.dco_env_a, p.dco_env_d, p.dco_env_s, p.dco_env_r);
 		dco_env->gate_on();
@@ -198,7 +199,6 @@ void __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 			if (true || env) {
 				env = env * p.dco_env_level;	// 24 bits
 				env = (env >> 10) + 8192;		// 14 bits
-//printf("%ld\n", env);
 				v.step = ((uint64_t)v.step * power_table[env]) >> 15;
 			}
 		}
