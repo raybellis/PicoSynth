@@ -61,6 +61,7 @@ target_link_libraries(${PROJECT} PRIVATE
 	pico_stdlib
 	pico_multicore
 	pico_audio_i2s
+	pico_unique_id
 	hardware_interp
 	tinyusb_device
 	tinyusb_board
