@@ -55,7 +55,7 @@ public:
 	void					midi_in(uint8_t c, uint8_t d1, uint8_t d2);
 
 public:
-	void					update(int32_t* samples, size_t n);
+	uint8_t					update(int32_t* samples, size_t n);
 
 public:
 							SynthEngine();

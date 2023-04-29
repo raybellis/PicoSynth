@@ -4,6 +4,7 @@
 #include "pico/multicore.h"
 #include "pico/util/queue.h"
 #include "hardware/gpio.h"
+#include "hardware/vreg.h"
 #include "bsp/board.h"
 #include "tusb.h"
 
@@ -28,7 +29,13 @@ const uint LED_PIN = PICO_DEFAULT_LED_PIN;
 static bool led_state = false;
 
 static queue_t midi_queue;
+
 static queue_t bench_queue;
+
+struct bench_entry {
+	uint32_t	delta;
+	uint8_t		active;
+};
 
 //--------------------------------------------------------------------+
 // MIDI packet dispatch
@@ -107,11 +114,15 @@ void audio_task(void)
 	}
 
 	// get samples from the synth engine
-	engine.update(samples, BUFFER_SIZE);
+	uint8_t active = engine.update(samples, BUFFER_SIZE);
 
 	uint32_t t1 = bench_time();
-	uint32_t delta = 8 * bench_delta(t0, t1);
-	queue_add_blocking(&bench_queue, &delta);
+	bench_entry data = {
+		4 * bench_delta(t0, t1),
+		active
+	};
+
+	queue_add_blocking(&bench_queue, &data);
 
 	struct audio_buffer *buffer = take_audio_buffer(ap, true);
 	int16_t *out = (int16_t *) buffer->buffer->bytes;
@@ -153,7 +164,7 @@ void lcd_init()
 
 	lcd->set_backlight(192);
 
-	graphics->set_font("bitmap8");
+	// graphics->set_font("bitmap8");
 	graphics->set_pen(0, 0, 0);
 	graphics->clear();
 	lcd->update(graphics);
@@ -180,31 +191,36 @@ void led_blinking_task(void)
 
 void benchmark_task()
 {
+	static uint32_t start_ms = 0;
 	static uint32_t bench_min = 0xffffffff, bench_max = 0;
+	static uint8_t active;
 
-	uint32_t delta;
-	bool changed = false;
-	while (queue_try_remove(&bench_queue, &delta)) {
+	bench_entry entry;
+	while (queue_try_remove(&bench_queue, &entry)) {
+		uint32_t& delta = entry.delta;
 		if (delta < bench_min) {
 			bench_min = delta;
-			changed = true;
 		} else if (delta > bench_max) {
 			bench_max = delta;
-			changed = true;
+		}
+
+		if (active != entry.active) {
+			active = entry.active;
 		}
 	}
 
-	if (changed) {
-		using namespace pimoroni;
-		std::string min = std::to_string(bench_min);
-		std::string max = std::to_string(bench_max);
-		graphics->set_pen(0, 0, 0);
-		graphics->clear();
-		graphics->set_pen(255, 255, 255);
-		graphics->text(min, Point(4,  4), 120);
-		graphics->text(max, Point(4, 20), 120);
-		lcd->update(graphics);
-	}
+	// Blink every interval ms
+	if (board_millis() - start_ms < 250) return;
+	start_ms += 250;
+
+	using namespace pimoroni;
+	graphics->set_pen(0, 0, 0);
+	graphics->clear();
+	graphics->set_pen(255, 255, 255);
+	graphics->text(std::to_string(bench_min), Point(4,  4), 120);
+	graphics->text(std::to_string(bench_max), Point(4, 20), 120);
+	graphics->text(std::to_string(active), Point(4, 36), 120);
+	lcd->update(graphics);
 }
 
 //--------------------------------------------------------------------+
@@ -214,13 +230,18 @@ void benchmark_task()
 int main() {
 
 	stdio_init_all();
+
+	vreg_set_voltage(VREG_VOLTAGE_1_30);
+	sleep_ms(1);
+	set_sys_clock_khz(250000, false);
+
 	board_init();
 	ap = audio_init();
 	lcd_init();
 	tusb_init();
 
 	queue_init(&midi_queue, 4, 64);
-	queue_init(&bench_queue, 4, 64);
+	queue_init(&bench_queue, sizeof(bench_entry), 64);
 
 	multicore_launch_core1(audio_loop);
 

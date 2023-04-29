@@ -132,8 +132,10 @@ Voice* SynthEngine::allocate()
 // temporary buffer of mono samples
 static int16_t mono[BUFFER_SIZE];
 
-void __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
+uint8_t __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 {
+	uint8_t active = 0;
+
 	// update all envelopes and release any voice
 	// that now has an inactive DCA
 	for (auto& v: voice) {
@@ -178,10 +180,12 @@ void __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 
 		// scale the DCA by the 7-bit note velocity
 		dca *= v.vel;							// 22 bits
+		if (!dca) continue;
 
 		// scale the DCA by the 7-bit channel volume
 		dca *= chan.control[volume];			// 29 bits
 		dca >>= 4;								// 25 bits
+		if (!dca) continue;
 
 		// apply 7-bit pan and scale back to 16 bits
 		uint16_t level_l = (dca * chan.pan_l) >> 16;
@@ -203,6 +207,9 @@ void __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 			}
 		}
 
+		// count active voices
+		++active;
+
 		// generate a buffer full of (mono) samples
 		v.update(mono, n);
 
@@ -212,6 +219,8 @@ void __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 			samples[j++] += (level_r * mono[i]) >> 16;
 		}
 	}
+
+	return active;
 }
 
 void SynthEngine::note_on(uint8_t chan, uint8_t note, uint8_t vel)
