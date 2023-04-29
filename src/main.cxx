@@ -109,9 +109,8 @@ void audio_task(void)
 {
 	uint32_t t0 = bench_time();
 
-	for (int i = 0; i < 2 * BUFFER_SIZE ; ++i) {
-		samples[i] = 0;
-	}
+	// clear accumulation buffer
+	memset(samples, 0, sizeof(samples));
 
 	// get samples from the synth engine
 	uint8_t active = engine.update(samples, BUFFER_SIZE);
@@ -164,7 +163,7 @@ void lcd_init()
 
 	lcd->set_backlight(192);
 
-	// graphics->set_font("bitmap8");
+	graphics->set_font("bitmap8");
 	graphics->set_pen(0, 0, 0);
 	graphics->clear();
 	lcd->update(graphics);

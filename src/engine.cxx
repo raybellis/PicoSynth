@@ -67,7 +67,7 @@ void Voice::note_on(uint8_t _chan, uint8_t _note, uint8_t _vel)
 		dco_env->gate_on();
 	}
 
-	// setup NCO
+	// setup DCO
 	step_base = note_table[note];
 	pos = 0;
 }
@@ -175,23 +175,25 @@ uint8_t __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 		// and a reference to the current note's patch
 		auto& p = *v.patch;
 
-		// get the 15-bit DCA level
-		uint32_t dca = v.dca_env->level();
+		// get the 15-bit DCA current envelope level
+		uint32_t dca = v.dca_env->level();		// 15 bits
+
+		// scale the DCA by the patch's 7-bit DCA master level
+		dca *= p.dca_env_level;					// 22 bits
 
 		// scale the DCA by the 7-bit note velocity
-		dca *= v.vel;							// 22 bits
-		if (!dca) continue;
+		dca *= v.vel;							// 29 bits
 
 		// scale the DCA by the 7-bit channel volume
+		dca >>= 7;								// 22 bits
 		dca *= chan.control[volume];			// 29 bits
 		dca >>= 4;								// 25 bits
-		if (!dca) continue;
 
 		// apply 7-bit pan and scale back to 16 bits
 		uint16_t level_l = (dca * chan.pan_l) >> 16;
 		uint16_t level_r = (dca * chan.pan_r) >> 16;
 
-		// scale the NCO step by the current pitchbend amount
+		// scale the DCO step by the current pitchbend amount
 		v.step = v.step_base;
 		if (chan.bend) {
 			v.step = ((uint64_t)v.step * chan.bend_f) >> 15;
@@ -207,11 +209,16 @@ uint8_t __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 			}
 		}
 
+		// generate a buffer full of (mono) samples
+		v.update(mono, n);
+
+		// TODO: apply filters here
+
 		// count active voices
 		++active;
 
-		// generate a buffer full of (mono) samples
-		v.update(mono, n);
+		// don't bother accumulating silent channels
+		if (!dca) continue;
 
 		// accumulate the samples into the supplied output buffer
 		for (size_t i = 0, j = 0; i < n; ++i) {
