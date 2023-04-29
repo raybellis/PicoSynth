@@ -3,7 +3,7 @@ CMakeFiles
 Makefile
 PicoSynth.*
 cmake_install.cmake
-*.h
+st7789_parallel.pio.h
 *.a
 elf2uf2
 generated

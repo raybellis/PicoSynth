@@ -1,28 +1,34 @@
+#include <string>
+
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
-#include "pico/binary_info.h"
 #include "pico/util/queue.h"
 #include "hardware/gpio.h"
-#include "hardware/structs/systick.h"
 #include "bsp/board.h"
 #include "tusb.h"
 
+#include "pico_display.hpp"
+#include "drivers/st7789/st7789.hpp"
+#include "libraries/pico_graphics/pico_graphics.hpp"
+
+#include "bench.h"
 #include "audio.h"
 #include "engine.h"
 
-enum	{
+enum {
 	BLINK_NOT_MOUNTED = 250,
 	BLINK_MOUNTED = 1000,
 	BLINK_SUSPENDED = 2500,
 };
 
 SynthEngine engine;
-
+static audio_buffer_pool *ap = nullptr;
 static uint32_t blink_interval_ms = BLINK_NOT_MOUNTED;
 const uint LED_PIN = PICO_DEFAULT_LED_PIN;
 static bool led_state = false;
-static audio_buffer_pool *ap = nullptr;
+
 static queue_t midi_queue;
+static queue_t bench_queue;
 
 //--------------------------------------------------------------------+
 // MIDI packet dispatch
@@ -94,12 +100,18 @@ int32_t samples[2 * BUFFER_SIZE];
 
 void audio_task(void)
 {
+	uint32_t t0 = bench_time();
+
 	for (int i = 0; i < 2 * BUFFER_SIZE ; ++i) {
 		samples[i] = 0;
 	}
 
 	// get samples from the synth engine
 	engine.update(samples, BUFFER_SIZE);
+
+	uint32_t t1 = bench_time();
+	uint32_t delta = 8 * bench_delta(t0, t1);
+	queue_add_blocking(&bench_queue, &delta);
 
 	struct audio_buffer *buffer = take_audio_buffer(ap, true);
 	int16_t *out = (int16_t *) buffer->buffer->bytes;
@@ -114,6 +126,8 @@ void audio_task(void)
 
 void audio_loop(void)
 {
+	bench_init();
+
 	while (true) {
 		uint8_t msg[4];
 		while (queue_try_remove(&midi_queue, msg)) {
@@ -121,6 +135,28 @@ void audio_loop(void)
 		}
 		audio_task();
 	}
+}
+
+//--------------------------------------------------------------------+
+// LCD handler
+//--------------------------------------------------------------------+
+
+static pimoroni::DisplayDriver* lcd = nullptr;
+static pimoroni::PicoGraphics* graphics = nullptr;
+
+void lcd_init()
+{
+	using namespace pimoroni;
+
+	lcd = new ST7789(PicoDisplay::WIDTH, PicoDisplay::HEIGHT, ROTATE_0, false, get_spi_pins(BG_SPI_FRONT));
+	graphics = new PicoGraphics_PenRGB332(lcd->width, lcd->height, nullptr);
+
+	lcd->set_backlight(192);
+
+	graphics->set_font("bitmap8");
+	graphics->set_pen(0, 0, 0);
+	graphics->clear();
+	lcd->update(graphics);
 }
 
 //--------------------------------------------------------------------+
@@ -139,25 +175,59 @@ void led_blinking_task(void)
 }
 
 //--------------------------------------------------------------------+
+// Benchmarking
+//--------------------------------------------------------------------+
+
+void benchmark_task()
+{
+	static uint32_t bench_min = 0xffffffff, bench_max = 0;
+
+	uint32_t delta;
+	bool changed = false;
+	while (queue_try_remove(&bench_queue, &delta)) {
+		if (delta < bench_min) {
+			bench_min = delta;
+			changed = true;
+		} else if (delta > bench_max) {
+			bench_max = delta;
+			changed = true;
+		}
+	}
+
+	if (changed) {
+		using namespace pimoroni;
+		std::string min = std::to_string(bench_min);
+		std::string max = std::to_string(bench_max);
+		graphics->set_pen(0, 0, 0);
+		graphics->clear();
+		graphics->set_pen(255, 255, 255);
+		graphics->text(min, Point(4,  4), 120);
+		graphics->text(max, Point(4, 20), 120);
+		lcd->update(graphics);
+	}
+}
+
+//--------------------------------------------------------------------+
 // Program startup
 //--------------------------------------------------------------------+
 
 int main() {
 
-    systick_hw->rvr = 0xffffff;
-    systick_hw->csr = 0x5;
-
 	stdio_init_all();
 	board_init();
-	tusb_init();
 	ap = audio_init();
+	lcd_init();
+	tusb_init();
 
 	queue_init(&midi_queue, 4, 64);
+	queue_init(&bench_queue, 4, 64);
+
 	multicore_launch_core1(audio_loop);
 
 	while (1)
 	{
 		tud_task();
 		led_blinking_task();
+		benchmark_task();
 	}
 }
