@@ -20,7 +20,7 @@ function generate(name, n, type, len, fn)
 {
 	let mask = Math.pow(2, len * 4) - 1;
 	let data = Array(n).fill(0).map((e, i) => i).map(fn);
-	out(`const ${type} __in_flash() ${name}[] = {\n`);
+	out(`const ${type} ${name}[] = {\n`);
 	for (let i = 0; i < n; i += 8) {
 		out("\t");
 		for (let j = 0; (j < 8) && (i + j < n); ++j) {
