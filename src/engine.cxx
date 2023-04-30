@@ -16,8 +16,8 @@ extern uint16_t power_table[];
 // Utility functions
 //--------------------------------------------------------------------+
 
-// x is a (14-bit signed) offset into the power table which
-// contains 1:15 bit log2 multipliers for 0.500 ..< 2.000
+// x is a (14-bit signed) offset into the power table which contains
+/// 1:15 fixed-point log2 multipliers for x = 0.500 ..< 2.000
 static inline void frequency_modulate(uint32_t& step, int16_t x)
 {
 	uint32_t mul = power_table[x + 8192] << 1;
@@ -231,9 +231,9 @@ uint32_t __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 
 		// update and apply the LFO
 		uint8_t wheel = chan.control[modwheel];
+		v.lfo_step = note_table[p.lfo_freq];
+		v.lfo_pos = (v.lfo_pos + v.lfo_step) & (WAVE_MAX - 1);
 		if (wheel && p.lfo_depth) {
-			v.lfo_step = note_table[p.lfo_freq];
-			v.lfo_pos = (v.lfo_pos + v.lfo_step) & (WAVE_MAX - 1);
 			int16_t* lfo_wave = waves[p.lfo_wave];
 			int32_t lfo_amount = lfo_wave[v.lfo_pos >> 16];	// 16 bits
 			lfo_amount *= p.lfo_depth;						// 23 bits
