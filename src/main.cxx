@@ -1,4 +1,6 @@
 #include <string>
+#include <sstream>
+#include <iomanip>
 
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
@@ -34,7 +36,7 @@ static queue_t bench_queue;
 
 struct bench_entry {
 	uint32_t	delta;
-	uint8_t		active;
+	uint32_t	data;
 };
 
 //--------------------------------------------------------------------+
@@ -113,15 +115,15 @@ void audio_task(void)
 	memset(samples, 0, sizeof(samples));
 
 	// get samples from the synth engine
-	uint8_t active = engine.update(samples, BUFFER_SIZE);
+	uint32_t data = engine.update(samples, BUFFER_SIZE);
 
 	uint32_t t1 = bench_time();
-	bench_entry data = {
+	bench_entry entry = {
 		8 * bench_delta(t0, t1),
-		active
+		data
 	};
 
-	queue_add_blocking(&bench_queue, &data);
+	queue_add_blocking(&bench_queue, &entry);
 
 	struct audio_buffer *buffer = take_audio_buffer(ap, true);
 	int16_t *out = (int16_t *) buffer->buffer->bytes;
@@ -188,11 +190,19 @@ void led_blinking_task(void)
 // Benchmarking
 //--------------------------------------------------------------------+
 
+template <typename T>
+inline std::string int_to_hex(T val, size_t width=sizeof(T)*2)
+{
+    std::stringstream ss;
+    ss << std::setfill('0') << std::setw(width) << std::hex << (val|0);
+    return ss.str();
+}
+
 void benchmark_task()
 {
 	static uint32_t start_ms = 0;
 	static uint32_t bench_min = 0xffffffff, bench_max = 0;
-	static uint8_t active;
+	static uint32_t data;
 
 	bench_entry entry;
 	while (queue_try_remove(&bench_queue, &entry)) {
@@ -203,8 +213,8 @@ void benchmark_task()
 			bench_max = delta;
 		}
 
-		if (active != entry.active) {
-			active = entry.active;
+		if (data != entry.data) {
+			data = entry.data;
 		}
 	}
 
@@ -218,7 +228,7 @@ void benchmark_task()
 	graphics->set_pen(255, 255, 255);
 	graphics->text(std::to_string(bench_min), Point(4,  4), 120);
 	graphics->text(std::to_string(bench_max), Point(4, 20), 120);
-	graphics->text(std::to_string(active), Point(4, 36), 120);
+	graphics->text(int_to_hex(data), Point(4, 36), 120);
 	lcd->update(graphics);
 }
 

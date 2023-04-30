@@ -19,12 +19,12 @@ private:					// state mirroring MIDI values
 	uint8_t					program;
 
 private:					// calculated state
-	uint16_t				bend_f;
+	int16_t					bend_f;
 	uint8_t					pan_l;
 	uint8_t					pan_r;
 
 private:					// cached state
-	uint16_t				bend_x = 0xffff;
+	int16_t					bend_x = 0xffff;
 
 public:
 							Channel();

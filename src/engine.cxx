@@ -10,7 +10,26 @@
 #include "waves.h"
 
 extern uint32_t note_table[];
-extern int16_t power_table[];
+extern uint16_t power_table[];
+
+//--------------------------------------------------------------------+
+// Utility functions
+//--------------------------------------------------------------------+
+
+// x is a (14-bit signed) offset into the power table which
+// contains 1:15 bit log2 multipliers for 0.500 ..< 2.000
+static inline void frequency_modulate(uint32_t& step, int16_t x)
+{
+	uint32_t mul = power_table[x + 8192] << 1;
+
+	uint32_t msb = (step >> 16) & 0xffff;
+	uint32_t lsb = step & 0xffff;
+
+	uint32_t r1 = (msb * mul);
+	uint32_t r2 = (lsb * mul);
+
+	step = r1 + (r2 >> 16);
+}
 
 //--------------------------------------------------------------------+
 // Per-voice state
@@ -132,9 +151,9 @@ Voice* SynthEngine::allocate()
 // temporary buffer of mono samples
 static int16_t mono[BUFFER_SIZE];
 
-uint8_t __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
+uint32_t __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 {
-	uint8_t active = 0;
+	uint32_t data = 0;
 
 	// update all envelopes and release any voice
 	// that now has an inactive DCA
@@ -196,39 +215,37 @@ uint8_t __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 		// scale the DCO step by the current pitchbend amount
 		v.dco_step = v.dco_step_base;
 		if (chan.bend) {
-			v.dco_step = ((uint64_t)v.dco_step * chan.bend_f) >> 15;
+			frequency_modulate(v.dco_step, chan.bend_f);
 		}
+		data = chan.bend_f + 8192;
 
 		// apply the DCO envelope
 		if (v.dco_env && p.dco_env_level) {
 			int32_t env = v.dco_env->level();	// 16 bits
 			if (true || env) {
 				env = env * p.dco_env_level;	// 24 bits
-				env = (env >> 10) + 8192;		// 14 bits
-				v.dco_step = ((uint64_t)v.dco_step * power_table[env]) >> 15;
+				env >>= 10;						// 14 bits
+				frequency_modulate(v.dco_step, env);
 			}
 		}
 
 		// update and apply the LFO
-		if (p.lfo_depth && chan.control[modwheel]) {
+		uint8_t wheel = chan.control[modwheel];
+		if (wheel && p.lfo_depth) {
 			v.lfo_step = note_table[p.lfo_freq];
 			v.lfo_pos = (v.lfo_pos + v.lfo_step) & (WAVE_MAX - 1);
 			int16_t* lfo_wave = waves[p.lfo_wave];
-			int32_t lfo_level = lfo_wave[v.lfo_pos >> 16];	// 16 bits
-			lfo_level *= p.lfo_depth;						// 23 bits
-			lfo_level *= chan.control[modwheel];			// 30 bits
-			lfo_level >>= 16;								// 14 bits
-			int16_t power = 8192 + lfo_level;
-			v.dco_step = ((uint64_t)v.dco_step * power_table[power]) >> 15;
+			int32_t lfo_amount = lfo_wave[v.lfo_pos >> 16];	// 16 bits
+			lfo_amount *= p.lfo_depth;						// 23 bits
+			lfo_amount *= wheel;							// 30 bits
+			lfo_amount >>= 16;								// 14 bits
+			frequency_modulate(v.dco_step, lfo_amount);
 		}
 
 		// generate a buffer full of (mono) samples
 		v.update(mono, n);
 
 		// TODO: apply filters here
-
-		// count active voices
-		++active;
 
 		// don't bother accumulating silent channels
 		if (!dca) continue;
@@ -240,7 +257,7 @@ uint8_t __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 		}
 	}
 
-	return active;
+	return data;
 }
 
 void SynthEngine::note_on(uint8_t chan, uint8_t note, uint8_t vel)

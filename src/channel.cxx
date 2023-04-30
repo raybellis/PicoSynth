@@ -32,15 +32,11 @@ void Channel::set_bend(uint8_t lsb, uint8_t msb)
 {
 	bend = (int16_t)((msb << 7) | lsb) - 8192;
 
-	// calculate frequency scaling amount if changed
+	// adjust by bend range amount if changed
 	if (bend != bend_x) {
-		extern int16_t power_table[];
-
 		hw_divider_divmod_s32_start(bend * bend_range, 12);
 		auto res = hw_divider_result_wait();
-		uint16_t offset = 8192 + to_quotient_s32(res);
-
-		bend_f = power_table[offset];
+		bend_f = to_quotient_s32(res);
 		bend_x = bend;
 	}
 }
