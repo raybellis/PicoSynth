@@ -15,7 +15,7 @@ message("-- Building data files")
 
 set(CONFIG_SAMPLE_RATE 44100)
 set(CONFIG_WAVE_SHIFT  11)
-set(CONFIG_BUFFER_SIZE 128)
+set(CONFIG_BUFFER_SIZE 256)
 
 execute_process(
 	COMMAND ./utils/data.js ${CONFIG_SAMPLE_RATE} ${CONFIG_WAVE_SHIFT} ${CONFIG_BUFFER_SIZE}

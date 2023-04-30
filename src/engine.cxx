@@ -9,6 +9,7 @@
 #include "midi.h"
 #include "waves.h"
 
+extern uint32_t note_table[];
 extern int16_t power_table[];
 
 //--------------------------------------------------------------------+
@@ -33,9 +34,9 @@ Voice::Voice()
 void Voice::update(int16_t* samples, size_t n)
 {
 	// copy voice state to the interpolator
-	interp0->base[0] = step;
-	interp0->base[2] = (uint32_t)waves[patch->wavenum];
-	interp0->accum[0] = pos;
+	interp0->base[0] = dco_step;
+	interp0->base[2] = (uint32_t)waves[patch->dco_wave];
+	interp0->accum[0] = dco_pos;
 
 	// generate the samples
 	for (uint i = 0; i < n; ++i) {
@@ -43,12 +44,11 @@ void Voice::update(int16_t* samples, size_t n)
 	}
 
 	// update voice state
-	pos = interp0->accum[0] & (wave_max - 1);
+	dco_pos = interp0->accum[0] & (wave_max - 1);
 }
 
 void Voice::note_on(uint8_t _chan, uint8_t _note, uint8_t _vel)
 {
-	extern uint32_t note_table[];
 
 	// remember note parameters
 	note = _note;
@@ -68,8 +68,8 @@ void Voice::note_on(uint8_t _chan, uint8_t _note, uint8_t _vel)
 	}
 
 	// setup DCO
-	step_base = note_table[note];
-	pos = 0;
+	dco_step_base = note_table[note];
+	dco_pos = 0;
 }
 
 void Voice::note_off()
@@ -194,9 +194,9 @@ uint8_t __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 		uint16_t level_r = (dca * chan.pan_r) >> 16;
 
 		// scale the DCO step by the current pitchbend amount
-		v.step = v.step_base;
+		v.dco_step = v.dco_step_base;
 		if (chan.bend) {
-			v.step = ((uint64_t)v.step * chan.bend_f) >> 15;
+			v.dco_step = ((uint64_t)v.dco_step * chan.bend_f) >> 15;
 		}
 
 		// apply the DCO envelope
@@ -205,8 +205,21 @@ uint8_t __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 			if (true || env) {
 				env = env * p.dco_env_level;	// 24 bits
 				env = (env >> 10) + 8192;		// 14 bits
-				v.step = ((uint64_t)v.step * power_table[env]) >> 15;
+				v.dco_step = ((uint64_t)v.dco_step * power_table[env]) >> 15;
 			}
+		}
+
+		// update and apply the LFO
+		if (p.lfo_depth && chan.control[modwheel]) {
+			v.lfo_step = note_table[p.lfo_freq];
+			v.lfo_pos = (v.lfo_pos + v.lfo_step) & (WAVE_MAX - 1);
+			int16_t* lfo_wave = waves[p.lfo_wave];
+			int32_t lfo_level = lfo_wave[v.lfo_pos >> 16];	// 16 bits
+			lfo_level *= p.lfo_depth;						// 23 bits
+			lfo_level *= chan.control[modwheel];			// 30 bits
+			lfo_level >>= 16;								// 14 bits
+			int16_t power = 8192 + lfo_level;
+			v.dco_step = ((uint64_t)v.dco_step * power_table[power]) >> 15;
 		}
 
 		// generate a buffer full of (mono) samples

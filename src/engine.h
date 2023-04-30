@@ -18,9 +18,14 @@ private:
 	bool					steal;
 	uint8_t					note;
 	uint8_t					vel;
-	uint32_t				step_base;
-	uint32_t				step;
-	uint32_t				pos;
+
+	uint32_t				dco_step_base;
+	uint32_t				dco_step;
+	uint32_t				dco_pos;
+
+	uint32_t				lfo_step;
+	uint32_t				lfo_pos;
+
 	Channel*				channel;
 	Patch*					patch;
 	Envelope*				dca_env;
