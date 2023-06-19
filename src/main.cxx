@@ -119,7 +119,7 @@ void audio_task(void)
 
 	uint32_t t1 = bench_time();
 	bench_entry entry = {
-		8 * bench_delta(t0, t1),
+		4 * bench_delta(t0, t1),
 		data
 	};
 
@@ -240,11 +240,9 @@ int main() {
 
 	stdio_init_all();
 
-#if 0
 	vreg_set_voltage(VREG_VOLTAGE_1_30);
 	sleep_ms(1);
 	set_sys_clock_khz(250000, false);
-#endif
 
 	board_init();
 	ap = audio_init();

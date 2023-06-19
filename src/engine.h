@@ -45,7 +45,7 @@ public:
 class SynthEngine {
 
 private:
-	static const uint8_t	nv = 64;
+	static const uint8_t	nv = 128;
 	Voice					voice[nv];
 	Channel					channel[16];
 
