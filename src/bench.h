@@ -15,6 +15,7 @@ static inline uint32_t bench_time()
 
 static inline uint32_t bench_delta(uint32_t t0, uint32_t t1)
 {
+	// check for 24 bit overflow
 	if (t1 < t0) {
 		return t0 - t1;
 	} else {
