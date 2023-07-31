@@ -1,9 +1,9 @@
 cmake_minimum_required(VERSION 3.19)
 set(PROJECT PicoSynth)
 
-include(../pico-sdk/external/pico_sdk_import.cmake)
-include(../pico-extras/external/pico_extras_import.cmake)
-include(../pimoroni-pico/pimoroni_pico_import.cmake)
+include($ENV{PICO_SDK_PATH}/external/pico_sdk_import.cmake)
+include($ENV{PICO_EXTRAS_PATH}/external/pico_extras_import.cmake)
+include($ENV{PICO_HOME}/pimoroni-pico/pimoroni_pico_import.cmake)
 
 project(${PROJECT} C CXX ASM)
 
