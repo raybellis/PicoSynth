@@ -10,7 +10,7 @@
 #include "bsp/board.h"
 #include "tusb.h"
 
-#include "pico_display.hpp"
+#include "pico_display_2.hpp"
 #include "drivers/st7789/st7789.hpp"
 #include "libraries/pico_graphics/pico_graphics.hpp"
 
@@ -160,7 +160,7 @@ void lcd_init()
 {
 	using namespace pimoroni;
 
-	lcd = new ST7789(PicoDisplay::WIDTH, PicoDisplay::HEIGHT, ROTATE_0, false, get_spi_pins(BG_SPI_FRONT));
+	lcd = new ST7789(PicoDisplay2::WIDTH, PicoDisplay2::HEIGHT, ROTATE_0, false, get_spi_pins(BG_SPI_FRONT));
 	graphics = new PicoGraphics_PenRGB332(lcd->width, lcd->height, nullptr);
 
 	lcd->set_backlight(192);

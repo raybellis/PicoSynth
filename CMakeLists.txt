@@ -40,7 +40,7 @@ pico_enable_stdio_usb(${PROJECT} 0)
 pico_enable_stdio_uart(${PROJECT} 1)
 
 include(common/pimoroni_bus)
-include(libraries/pico_display/pico_display)
+include(libraries/pico_display_2/pico_display_2)
 include(libraries/pico_graphics/pico_graphics)
 include(drivers/rgbled/rgbled)
 include(drivers/st7789/st7789)
@@ -53,8 +53,8 @@ target_compile_options(${PROJECT} PRIVATE -Wall -Werror -O3)
 target_compile_definitions(${PROJECT} PRIVATE
 	PICO_AUDIO_I2S_MONO_INPUT=0
 	PICO_AUDIO_I2S_MONO_OUTPUT=0
-	PICO_AUDIO_I2S_DATA_PIN=26
-	PICO_AUDIO_I2S_CLOCK_PIN_BASE=27
+	PICO_AUDIO_I2S_DATA_PIN=9
+	PICO_AUDIO_I2S_CLOCK_PIN_BASE=10
 )
 
 target_link_libraries(${PROJECT} PRIVATE
@@ -65,7 +65,7 @@ target_link_libraries(${PROJECT} PRIVATE
 	hardware_interp
 	tinyusb_device
 	tinyusb_board
-	pico_display
+	pico_display_2
 	hardware_spi
 	hardware_pwm
 	pico_graphics
