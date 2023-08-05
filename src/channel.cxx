@@ -21,10 +21,10 @@ void Channel::set_cc(uint8_t cc, uint8_t v)
 {
 	control[cc] = v;
 
-	if (cc == pan) {
+	if (cc == pan) {	// zero = hard left
 		extern uint8_t pan_table[];
-		pan_l = pan_table[v];
-		pan_r = pan_table[127 - v];
+		pan_l = pan_table[127 - v];
+		pan_r = pan_table[v];
 	}
 }
 

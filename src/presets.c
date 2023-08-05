@@ -28,8 +28,8 @@ Patch presets[] = {
 		.dco_env_s		= 0,
 		.dco_env_r		= 0,
 
-		.lfo_freq		= 64,
-		.lfo_depth		= 127,
+		.lfo_freq		= 92,
+		.lfo_depth		= 20,
 	},
 	{	// 2
 		.dco_wave		= 2,
