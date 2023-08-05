@@ -5,6 +5,8 @@
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
 #include "pico/util/queue.h"
+#include "hardware/irq.h"
+#include "hardware/uart.h"
 #include "hardware/gpio.h"
 #include "hardware/vreg.h"
 #include "bsp/board.h"
@@ -18,17 +20,8 @@
 #include "audio.h"
 #include "engine.h"
 
-enum {
-	BLINK_NOT_MOUNTED = 250,
-	BLINK_MOUNTED = 1000,
-	BLINK_SUSPENDED = 2500,
-};
-
 SynthEngine engine;
 static audio_buffer_pool *ap = nullptr;
-static uint32_t blink_interval_ms = BLINK_NOT_MOUNTED;
-const uint LED_PIN = PICO_DEFAULT_LED_PIN;
-static bool led_state = false;
 
 static queue_t midi_queue;
 
@@ -40,13 +33,44 @@ struct bench_entry {
 };
 
 //--------------------------------------------------------------------+
+// LED state
+//--------------------------------------------------------------------+
+
+enum {
+	BLINK_NOT_MOUNTED = 250,
+	BLINK_MOUNTED = 1000,
+	BLINK_SUSPENDED = 2500,
+};
+
+static uint32_t blink_interval_ms = BLINK_NOT_MOUNTED;
+
+const uint LED_PIN = PICO_DEFAULT_LED_PIN;
+static bool led_state = false;
+
+static inline void led_toggle()
+{
+	board_led_write(led_state);
+	led_state = 1 - led_state;
+}
+
+void led_blinking_task(void)
+{
+	static uint32_t start_ms = 0;
+
+	// Blink every interval ms
+	if (board_millis() - start_ms < blink_interval_ms) return; // not enough time
+	start_ms += blink_interval_ms;
+
+	led_toggle();
+}
+
+//--------------------------------------------------------------------+
 // MIDI packet dispatch
 //--------------------------------------------------------------------+
 
 static void process_packet(uint8_t *packet)
 {
-	board_led_write(led_state);
-	led_state = 1 - led_state; // toggle
+	led_toggle();
 
 	uint8_t cable = packet[0] & 0xf0;
 	if (cable != 0) return;
@@ -87,7 +111,7 @@ void tud_resume_cb(void)
 }
 
 //--------------------------------------------------------------------+
-// MIDI RX task
+// USB MIDI RX task
 //--------------------------------------------------------------------+
 
 void tud_midi_rx_cb(uint8_t itf)
@@ -99,6 +123,71 @@ void tud_midi_rx_cb(uint8_t itf)
 			process_packet(packet);
 		}
 	}
+}
+
+//--------------------------------------------------------------------+
+// Serial MIDI
+//--------------------------------------------------------------------+
+
+const auto MIDI = uart1;
+const auto MIDI_IRQ = UART1_IRQ;
+
+void midi_serial_irq()
+{
+	static uint8_t buf[4] = { 0, };
+	static uint8_t pos = 1;
+	static uint8_t len = 0;
+	static bool sysex = false;
+
+	while (uart_is_readable(MIDI)) {
+		uint8_t in = uart_getc(MIDI);
+
+		// ignore MIDI realtime messages
+		if (in >= 0xf8) continue;
+
+		// (mostly) ignore SysEx messages
+		if (sysex) {
+			if (in & 0x80) {
+				sysex = false;
+			} else {
+				continue;
+			}
+		}
+
+		// process command bytes
+		if (in & 0x80) {
+			if (in == 0xf0) {
+				sysex = true;
+				continue;
+			} else if (in >= 0x80) {
+				pos = 1;
+				buf[pos++] = in;
+				len = ((in & 0xe0) == 0xc0) ? 2 : 3;
+			}
+			continue;
+		}
+
+		// process data bytes
+		buf[pos] = in;
+		if (pos++ == len) {
+			process_packet(buf);
+			pos = 2;
+		}
+	}
+}
+
+void midi_init()
+{
+	uart_init(MIDI, 31250);
+	gpio_set_function(4, GPIO_FUNC_UART);
+	gpio_set_function(5, GPIO_FUNC_UART);
+	uart_set_hw_flow(MIDI, false, false);
+	uart_set_format(MIDI, 8, 1, UART_PARITY_NONE);
+
+	irq_set_exclusive_handler(MIDI_IRQ, midi_serial_irq);
+	irq_set_enabled(MIDI_IRQ, true);
+
+	uart_set_irq_enables(MIDI, true, false);
 }
 
 //--------------------------------------------------------------------+
@@ -172,21 +261,6 @@ void lcd_init()
 }
 
 //--------------------------------------------------------------------+
-// LED handler
-//--------------------------------------------------------------------+
-void led_blinking_task(void)
-{
-	static uint32_t start_ms = 0;
-
-	// Blink every interval ms
-	if (board_millis() - start_ms < blink_interval_ms) return; // not enough time
-	start_ms += blink_interval_ms;
-
-	board_led_write(led_state);
-	led_state = 1 - led_state; // toggle
-}
-
-//--------------------------------------------------------------------+
 // Benchmarking
 //--------------------------------------------------------------------+
 
@@ -218,7 +292,7 @@ void benchmark_task()
 		}
 	}
 
-	// Blink every interval ms
+	// refresh every 250 ms
 	if (board_millis() - start_ms < 250) return;
 	start_ms += 250;
 
@@ -248,6 +322,7 @@ int main() {
 	ap = audio_init();
 	lcd_init();
 	tusb_init();
+	midi_init();
 
 	queue_init(&midi_queue, 4, 64);
 	queue_init(&bench_queue, sizeof(bench_entry), 64);
