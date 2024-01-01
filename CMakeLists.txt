@@ -67,6 +67,7 @@ add_executable(${PROJECT}
 	src/engine.cxx
 	src/channel.cxx
 	src/envelope.cxx
+	src/filter.cxx
 	src/presets.c
 	src/data.c
 	src/waves.c

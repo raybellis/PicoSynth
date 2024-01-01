@@ -52,6 +52,12 @@ generate("power_table", 16384, 'uint16_t', 4,
 	i => Math.round(32768 * Math.pow(2.0, (i - 8192) / 8192))
 );
 
+generate("svf_table", 16384, 'int16_t', 4, i => {
+	i /= 128;
+	const cutoff = 440.0 * Math.pow(2.0, (i - 69) / 12);
+	return Math.round(32768 * Math.sin(Math.PI * cutoff / sample_rate));
+});
+
 fs.closeSync(fh);
 
 fh = fs.openSync('src/settings.h', 'w');
