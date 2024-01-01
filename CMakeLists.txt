@@ -19,9 +19,12 @@ set(CONFIG_BUFFER_SIZE 256)
 
 execute_process(
 	COMMAND ./utils/data.js ${CONFIG_SAMPLE_RATE} ${CONFIG_WAVE_SHIFT} ${CONFIG_BUFFER_SIZE}
+	WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+)
+
+execute_process(
 	COMMAND ./utils/waves.js
 	WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
-	COMMAND_ERROR_IS_FATAL ANY
 )
 
 add_executable(${PROJECT}
@@ -42,7 +45,6 @@ pico_enable_stdio_uart(${PROJECT} 1)
 include(common/pimoroni_bus)
 include(libraries/pico_display_2/pico_display_2)
 include(libraries/pico_graphics/pico_graphics)
-include(drivers/rgbled/rgbled)
 include(drivers/st7789/st7789)
 
 target_include_directories(${PROJECT} PRIVATE ${CMAKE_CURRENT_LIST_DIR})
@@ -72,7 +74,6 @@ target_link_libraries(${PROJECT} PRIVATE
 	hardware_pwm
 	pico_graphics
 	st7789
-	rgbled
 )
 
 pico_add_extra_outputs(${PROJECT})
