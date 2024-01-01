@@ -12,9 +12,11 @@
 #include "bsp/board.h"
 #include "tusb.h"
 
+#if CONFIG_LCD_ACTIVE
 #include "pico_display_2.hpp"
 #include "drivers/st7789/st7789.hpp"
 #include "libraries/pico_graphics/pico_graphics.hpp"
+#endif
 
 #include "bench.h"
 #include "audio.h"
@@ -242,6 +244,8 @@ void audio_loop(void)
 // LCD handler
 //--------------------------------------------------------------------+
 
+#if CONFIG_LCD_ACTIVE
+
 static pimoroni::DisplayDriver* lcd = nullptr;
 static pimoroni::PicoGraphics* graphics = nullptr;
 
@@ -259,6 +263,12 @@ void lcd_init()
 	graphics->clear();
 	lcd->update(graphics);
 }
+
+#else
+void lcd_init()
+{
+}
+#endif
 
 //--------------------------------------------------------------------+
 // Benchmarking
@@ -296,6 +306,7 @@ void benchmark_task()
 	if (board_millis() - start_ms < 250) return;
 	start_ms += 250;
 
+#if CONFIG_LCD_ACTIVE
 	using namespace pimoroni;
 	graphics->set_pen(0, 0, 0);
 	graphics->clear();
@@ -304,6 +315,7 @@ void benchmark_task()
 	graphics->text(std::to_string(bench_max), Point(4, 20), 120);
 	graphics->text(int_to_hex(data), Point(4, 36), 120);
 	lcd->update(graphics);
+#endif
 }
 
 //--------------------------------------------------------------------+
