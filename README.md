@@ -27,7 +27,7 @@ PCB with MIDI DIN ports and I2S DAC is under development.
 
 The RP2040 is overclocked to 250 MHz.
 
-## Building
+## Building
 
 Familiarity with using the RP2040 Pico SDK is assumed.
 
