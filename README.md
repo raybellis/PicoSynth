@@ -27,6 +27,13 @@ PCB with MIDI DIN ports and I2S DAC is under development.
 
 The RP2040 is overclocked to 250 MHz.
 
+## Building
+
+Familiarity with using the RP2040 Pico SDK is assumed.
+
+My own development system is macOS and I use the arm-none-eabi-gcc
+compiler v13.2.0 from MacPorts.
+
 Building the code requires the following repositories, as well as an
 installation of NodeJS which is used to construct the various lookup
 tables used by the code:
@@ -35,8 +42,8 @@ tables used by the code:
 - Pico Extras (git@github.com:raspberrypi/pico-extras.git)
 - Pimoroni Pico Lib (git@github.com:pimoroni/pimoroni-pico.git)
 
-I use the following in my `.cshrc` with the above three repositories
-all checked out into `${PICO_HOME}`:
+I use the following in my `.cshrc` with the above three repositories all
+checked out into `${PICO_HOME}`:
 
 ```
 setenv PICO_HOME "/opt/pico"
