@@ -17,7 +17,7 @@ NB: this is very much a work in progress!
   - ADSR pitch envelope
   - pitch bend
 - DCA
-  - ADSR enveloper
+  - ADSR envelope
   - stereo pan
 - USB MIDI device
 - Serial MIDI (UART1, pins 4/5)
@@ -26,6 +26,23 @@ The I2S interface is configured for use with the Pimoroni Audio Pack.  A
 PCB with MIDI DIN ports and I2S DAC is under development.
 
 The RP2040 is overclocked to 250 MHz.
+
+Building the code requires the following repositories, as well as an
+installation of NodeJS which is used to construct the various lookup
+tables used by the code:
+
+- Pico SDK (git@github.com:raspberrypi/pico-sdk.git)
+- Pico Extras (git@github.com:raspberrypi/pico-extras.git)
+- Pimoroni Pico Lib (git@github.com:pimoroni/pimoroni-pico.git)
+
+I use the following in my `.cshrc` with the above three repositories
+all checked out into `${PICO_HOME}`:
+
+```
+setenv PICO_HOME "/opt/pico"
+setenv PICO_SDK_PATH "${PICO_HOME}/pico-sdk"
+setenv PICO_EXTRAS_PATH "${PICO_HOME}/pico-extras"
+```
 
 ## License
 
