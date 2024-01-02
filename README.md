@@ -38,9 +38,9 @@ Building the code requires the following repositories, as well as an
 installation of NodeJS which is used to construct the various lookup
 tables used by the code:
 
-- Pico SDK (git@github.com:raspberrypi/pico-sdk.git)
-- Pico Extras (git@github.com:raspberrypi/pico-extras.git)
-- Pimoroni Pico Lib (git@github.com:pimoroni/pimoroni-pico.git)
+- Pico SDK (https://github.com/raspberrypi/pico-sdk.git)
+- Pico Extras (https://github.com/raspberrypi/pico-extras.git)
+- Pimoroni Pico Lib (https://github.com/pimoroni/pimoroni-pico.git)
 
 I use the following in my `.cshrc` with the above three repositories all
 checked out into `${PICO_HOME}`:
