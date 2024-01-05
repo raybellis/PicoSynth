@@ -24,7 +24,12 @@
  */
 
 #include "tusb.h"
+#if __has_include("bsp/board_api.h")
+#include "bsp/board_api.h"
+#else
 #include "bsp/board.h"
+#endif
+
 #include "pico/unique_id.h"
 
 /* A combination of interfaces must have a unique product id, since PC will save device driver after the first plug.

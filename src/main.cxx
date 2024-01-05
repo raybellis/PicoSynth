@@ -9,8 +9,12 @@
 #include "hardware/uart.h"
 #include "hardware/gpio.h"
 #include "hardware/vreg.h"
-#include "bsp/board.h"
 #include "tusb.h"
+#if __has_include("bsp/board_api.h")
+#include "bsp/board_api.h"
+#else
+#include "bsp/board.h"
+#endif
 
 #if CONFIG_LCD_ACTIVE
 #include "pico_display_2.hpp"

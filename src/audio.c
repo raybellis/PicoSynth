@@ -35,5 +35,12 @@ struct audio_buffer_pool *audio_init() {
 	assert(ok);
 	audio_i2s_set_enabled(true);
 
+#if CONFIG_HW_PICOADK == 1
+	// set gpio 25 (dac soft mute) to output and set to 1 (unmute)
+	gpio_init(25);
+	gpio_set_dir(25, GPIO_OUT);
+	gpio_put(25, 1);
+#endif
+
 	return producer_pool;
 }
