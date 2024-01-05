@@ -10,6 +10,7 @@ NB: this is very much a work in progress!
 
 - 128 voices
 - 16 channel multi-timbral
+- four hard-coded presets
 - 16-bit stereo I2S audio at 44.1kHz 
 - wavetable DCOs (2048 x 16-bit samples) using the RP2040 interpolator
 - DCO modulation:
@@ -22,10 +23,13 @@ NB: this is very much a work in progress!
 - USB MIDI device
 - Serial MIDI (UART1, pins 4/5)
 
+The RP2040 is overclocked to 250 MHz.
+
 The I2S interface is configured for use with the Pimoroni Audio Pack.  A
 PCB with MIDI DIN ports and I2S DAC is under development.
 
-The RP2040 is overclocked to 250 MHz.
+The DatanoiseTV [PicoADK](https://github.com/DatanoiseTV/PicoADK-Hardware)
+ board is also supported via `CONFIG_HW_PICOADK` in the `CMakeLists.txt` file.
 
 ## Building
 
