@@ -28,8 +28,8 @@ The RP2040 is overclocked to 250 MHz.
 The I2S interface is configured for use with the Pimoroni Audio Pack.  A
 PCB with MIDI DIN ports and I2S DAC is under development.
 
-The DatanoiseTV [PicoADK](https://github.com/DatanoiseTV/PicoADK-Hardware)
- board is also supported via `CONFIG_HW_PICOADK` in the `CMakeLists.txt` file.
+The [Datanoise PicoADK](https://github.com/DatanoiseTV/PicoADK-Hardware)
+board is also supported via `CONFIG_HW_PICOADK` in the `CMakeLists.txt` file.
 
 ## Building
 
