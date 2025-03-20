@@ -5,6 +5,7 @@
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
 #include "pico/util/queue.h"
+#include "hardware/clocks.h"
 #include "hardware/irq.h"
 #include "hardware/uart.h"
 #include "hardware/gpio.h"

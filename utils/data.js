@@ -35,7 +35,7 @@ function generate(name, n, type, len, fn)
 let fh = fs.openSync('src/data.c', 'w');
 
 out(`#include <stdint.h>
-#include <pico/platform.h>
+#include <pico.h>
 
 `);
 
