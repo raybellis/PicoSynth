@@ -13,7 +13,6 @@ public:
 	void					set_cutoff(uint16_t cutoff);
 	void					set_q(uint16_t q);
 
-public:
 	virtual void			apply(int16_t* buf, size_t n) = 0;
 
 public:

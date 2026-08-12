@@ -35,6 +35,7 @@ endif()
 #----------------------------------------------------------------------
 
 # import required SDKs
+
 include($ENV{PICO_SDK_PATH}/external/pico_sdk_import.cmake)
 include($ENV{PICO_EXTRAS_PATH}/external/pico_extras_import.cmake)
 if (${CONFIG_LCD_ACTIVE})
