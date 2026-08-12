@@ -13,7 +13,7 @@ set(CONFIG_WAVE_SHIFT  11)
 set(CONFIG_BUFFER_SIZE 256)
 
 # set to 1 to enable LCD debug output
-set(CONFIG_LCD_ACTIVE 0)
+set(CONFIG_LCD_ACTIVE 1)
 
 # select I2S audio option
 set(CONFIG_HW_PIMORONI_AUDIO 1)
@@ -86,7 +86,8 @@ endif()
 target_include_directories(${PROJECT} PRIVATE ${CMAKE_CURRENT_LIST_DIR})
 target_include_directories(${PROJECT} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
-target_compile_options(${PROJECT} PRIVATE -Wall -Werror -O3)
+# target_compile_options(${PROJECT} PRIVATE -Wall -Werror -O3)
+target_compile_options(${PROJECT} PRIVATE -Wall -O3)
 
 target_compile_definitions(${PROJECT} PRIVATE
 	PICO_AUDIO_I2S_MONO_INPUT=0

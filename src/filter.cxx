@@ -1,29 +1,46 @@
 #include "filter.h"
 
+// https://www.musicdsp.org/en/latest/Filters/23-state-variable.html
+
 void Filter::set_cutoff(uint16_t n)
 {
 	cutoff = n;
 }
 
-SVF::SVF() :
-	d1(0), d2(0)
+void Filter::set_q(uint16_t _q)
 {
+	q = _q;
+}
+
+SVF::SVF() :
+	low(0), band(0)
+{
+}
+
+SVF::~SVF()
+{
+}
+
+static inline int32_t fmul_su(int32_t a, int32_t s)
+{
+	return ((a * s) >> 15);
 }
 
 void SVF::apply(int16_t* buf, size_t n)
 {
 	extern uint16_t* svf_table;
-	uint16_t f1 = svf_table[cutoff];
-	uint16_t q1 = 1;
+	uint16_t f = svf_table[cutoff];
+	uint16_t scale = q;
+	int32_t high;
 
 	for (size_t i = 0; i < n; ++i) {
-		int16_t l = d2 + f1 * d1;
-		int16_t h = buf[i] - l - q1 * d1;
-		int16_t b = f1 * h + d1;
-		// int16_t n = h + l;
+		int32_t input = buf[i];
 
-		d1 = b;
-		d2 = l;
-		buf[i] = l;
+		low += fmul_su(band, f);
+		high = fmul_su(input, scale) - fmul_su(band, q) - low;
+		band += fmul_su(high, f);
+		// notch = high + low;
+
+		buf[i] = low;
 	}
 }

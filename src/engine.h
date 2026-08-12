@@ -6,6 +6,7 @@
 #include "channel.h"
 #include "patch.h"
 #include "waves.h"
+#include "filter.h"
 
 class Envelope;
 
@@ -30,6 +31,7 @@ private:
 	Patch*					patch;
 	Envelope*				dca_env;
 	Envelope*				dco_env;
+	Filter*					filter;
 
 private:
 	void					init();
@@ -45,7 +47,7 @@ public:
 class SynthEngine {
 
 private:
-	static const uint8_t	nv = 128;
+	static const uint8_t	nv = 32;
 	Voice					voice[nv];
 	Channel					channel[16];
 

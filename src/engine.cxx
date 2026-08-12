@@ -43,6 +43,7 @@ void Voice::init()
 	patch = nullptr;
 	dca_env = nullptr;
 	dco_env = nullptr;
+	filter = nullptr;
 }
 
 Voice::Voice()
@@ -89,6 +90,11 @@ void Voice::note_on(uint8_t _chan, uint8_t _note, uint8_t _vel)
 	// setup DCO
 	dco_step_base = note_table[note];
 	dco_pos = 0;
+
+	// set up the filter
+	filter = new SVF();
+	filter->set_cutoff(8192);
+	filter->set_q(16384);
 }
 
 void Voice::note_off()
@@ -123,6 +129,7 @@ void SynthEngine::deallocate(Voice& v)
 {
 	delete v.dca_env;
 	delete v.dco_env;
+	delete v.filter;
 	v.init();
 }
 
@@ -245,10 +252,11 @@ uint32_t __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 		// generate a buffer full of (mono) samples
 		v.update(mono, n);
 
-		// TODO: apply filters here
-
 		// don't bother accumulating silent channels
 		if (!dca) continue;
+
+		// apply the filter
+		v.filter->apply(mono, n);
 
 		// accumulate the samples into the supplied output buffer
 		for (size_t i = 0, j = 0; i < n; ++i) {

@@ -7,9 +7,13 @@ class Filter {
 
 protected:
 	uint16_t				cutoff;
+	uint16_t				q;
 
 public:
 	void					set_cutoff(uint16_t cutoff);
+	void					set_q(uint16_t q);
+
+public:
 	virtual void			apply(int16_t* buf, size_t n) = 0;
 
 public:
@@ -21,12 +25,13 @@ public:
 class SVF : virtual public Filter {
 
 private:
-	int16_t					d1, d2;
+	int32_t					low, band;
 
 public:
 	virtual void			apply(int16_t* buf, size_t n);
 
 public:
 							SVF();
+	virtual					~SVF();
 
 };
