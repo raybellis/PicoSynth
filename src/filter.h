@@ -7,9 +7,9 @@
 
 class Filter {
 
-protected:
-	uint16_t				cutoff;
-	uint16_t				q;
+protected:					// wide open, and no resonance, until set
+	uint16_t				cutoff = SVF_LEN - 1;
+	uint16_t				q = 32768;
 
 public:
 	void					set_cutoff(uint16_t cutoff);
