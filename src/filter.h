@@ -23,7 +23,7 @@ public:
 
 };
 
-class SVF : virtual public Filter {
+class SVF : public Filter {
 
 private:
 	int32_t					low, band;

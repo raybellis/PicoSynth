@@ -22,7 +22,7 @@ public:
 
 };
 
-class ADSR : virtual public Envelope {
+class ADSR : public Envelope {
 
 private:
 	uint16_t		s;
