@@ -2,7 +2,7 @@
 
 Patch presets[] = {
 	{	// 0
-		.dco_wave		= 1,
+		.dco_wave		= 0,
 
 		.dca_env_level	= 127,
 		.dca_env_a		= 30,
