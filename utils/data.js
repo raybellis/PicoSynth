@@ -54,10 +54,18 @@ generate("power_table", 16384, 'uint16_t', 4,
 	i => Math.round(32768 * Math.pow(2.0, (i - 8192) / 8192))
 );
 
-generate("svf_table", 16384, 'int16_t', 4, i => {
+// the state variable filter's cutoff coefficient is 2*sin(pi*Fc/Fs),
+// which spans 0 ..< 2 and is therefore stored as 2:14 fixed point.
+//
+// the filter is only stable while Fc <= Fs/6 (where the coefficient
+// reaches 1.0), so the top of the range is clamped there rather than
+// left to blow up
+const svf_max = sample_rate / 6;
+
+generate("svf_table", svf_len, 'int16_t', 4, i => {
 	i /= 128;
-	const cutoff = 440.0 * Math.pow(2.0, (i - 69) / 12);
-	return Math.round(32768 * Math.sin(Math.PI * cutoff / sample_rate));
+	const cutoff = Math.min(440.0 * Math.pow(2.0, (i - 69) / 12), svf_max);
+	return Math.round(16384 * 2 * Math.sin(Math.PI * cutoff / sample_rate));
 });
 
 fs.closeSync(fh);
