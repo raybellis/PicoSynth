@@ -26,7 +26,9 @@ Voice::Voice()
 	init();
 }
 
-void Voice::update(int16_t* samples, size_t n)
+// runs from RAM - this is the per-sample oscillator loop, called
+// for every active voice on every buffer
+void __not_in_flash_func(Voice::update)(int16_t* samples, size_t n)
 {
 	// copy voice state to the interpolator
 	interp0->base[0] = dco_step;

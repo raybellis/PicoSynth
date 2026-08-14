@@ -1,3 +1,5 @@
+#include "pico.h"
+
 #include "filter.h"
 
 // https://www.musicdsp.org/en/latest/Filters/23-state-variable.html
@@ -49,7 +51,9 @@ static inline int32_t clamp16(int32_t x)
 	return x;
 }
 
-void SVF::apply(int16_t* buf, size_t n)
+// runs from RAM - this is the per-sample inner loop of the audio
+// path, same as SynthEngine::update that calls it
+void __not_in_flash_func(SVF::apply)(int16_t* buf, size_t n)
 {
 	extern const int16_t svf_table[];
 	int32_t f = svf_table[cutoff];
