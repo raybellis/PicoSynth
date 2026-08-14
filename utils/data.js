@@ -3,13 +3,16 @@
 const fs = require('fs');
 const args = process.argv.slice(2);
 
-if (args.length != 3) {
+if (args.length != 4) {
   process.exit(1);
 }
 
-const sample_rate = +args[0];
-const wave_shift  = +args[1];
-const buffer_size = +args[2];
+const dir         = args[0];
+const sample_rate = +args[1];
+const wave_shift  = +args[2];
+const buffer_size = +args[3];
+
+fs.mkdirSync(dir, { recursive: true });
 
 const wave_len    = (1 << wave_shift);
 const wave_max    = 0x10000 * wave_len;
@@ -39,7 +42,7 @@ function generate(name, n, type, len, fn)
 	tables.push({ name, n, type });
 }
 
-let fh = fs.openSync('src/data.c', 'w');
+let fh = fs.openSync(`${dir}/data.c`, 'w');
 
 out(`#include "data.h"
 
@@ -77,7 +80,7 @@ fs.closeSync(fh);
 // declare the tables in a header that data.c itself includes, so that
 // the definitions above and every user of them are checked against
 // one another instead of against hand-written externs
-fh = fs.openSync('src/data.h', 'w');
+fh = fs.openSync(`${dir}/data.h`, 'w');
 out(`#pragma once
 
 #include <stdint.h>
@@ -99,7 +102,7 @@ out(`
 `);
 fs.closeSync(fh);
 
-fh = fs.openSync('src/settings.h', 'w');
+fh = fs.openSync(`${dir}/settings.h`, 'w');
 out(`#pragma once
 
 #define SAMPLE_RATE ${sample_rate}

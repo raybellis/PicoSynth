@@ -49,16 +49,31 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
 pico_sdk_init()
 
-message("-- Building data files")
+# the lookup tables are generated into the build tree rather than the
+# source tree, so that separate build directories (RP2040 vs RP2350,
+# say) each get their own copy instead of fighting over one.
+#
+# these run at build time, so editing a generator is enough to have
+# make rebuild the tables - the CONFIG_* values above are baked into
+# the command line, hence the dependency on this file as well
 
-execute_process(
-	COMMAND ./utils/data.js ${CONFIG_SAMPLE_RATE} ${CONFIG_WAVE_SHIFT} ${CONFIG_BUFFER_SIZE}
-	WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+set(GENERATED ${CMAKE_CURRENT_BINARY_DIR}/generated/tables)
+
+add_custom_command(
+	OUTPUT	${GENERATED}/data.c ${GENERATED}/data.h ${GENERATED}/settings.h
+	COMMAND	${CMAKE_CURRENT_LIST_DIR}/utils/data.js ${GENERATED}
+			${CONFIG_SAMPLE_RATE} ${CONFIG_WAVE_SHIFT} ${CONFIG_BUFFER_SIZE}
+	DEPENDS	${CMAKE_CURRENT_LIST_DIR}/utils/data.js ${CMAKE_CURRENT_LIST_FILE}
+	COMMENT	"Building data files"
+	VERBATIM
 )
 
-execute_process(
-	COMMAND ./utils/waves.js
-	WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+add_custom_command(
+	OUTPUT	${GENERATED}/waves.c
+	COMMAND	${CMAKE_CURRENT_LIST_DIR}/utils/waves.js ${GENERATED}
+	DEPENDS	${CMAKE_CURRENT_LIST_DIR}/utils/waves.js
+	COMMENT	"Building wave tables"
+	VERBATIM
 )
 
 add_executable(${PROJECT}
@@ -71,8 +86,13 @@ add_executable(${PROJECT}
 	src/envelope.cxx
 	src/filter.cxx
 	src/presets.c
-	src/data.c
-	src/waves.c
+
+	# listing the generated headers here too, not just the .c files,
+	# is what orders generation ahead of every compile in the target
+	${GENERATED}/data.c
+	${GENERATED}/data.h
+	${GENERATED}/settings.h
+	${GENERATED}/waves.c
 )
 
 pico_enable_stdio_usb(${PROJECT} 0)
@@ -87,6 +107,7 @@ endif()
 
 target_include_directories(${PROJECT} PRIVATE ${CMAKE_CURRENT_LIST_DIR})
 target_include_directories(${PROJECT} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_include_directories(${PROJECT} PRIVATE ${GENERATED})
 
 target_compile_options(${PROJECT} PRIVATE -Wall -Werror -O3)
 

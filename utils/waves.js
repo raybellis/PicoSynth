@@ -1,7 +1,16 @@
 #!/usr/bin/env node
 
 const fs = require('fs');
-const fh = fs.openSync('src/waves.c', 'w');
+const args = process.argv.slice(2);
+
+if (args.length != 1) {
+  process.exit(1);
+}
+
+const dir = args[0];
+fs.mkdirSync(dir, { recursive: true });
+
+const fh = fs.openSync(`${dir}/waves.c`, 'w');
 const waves = [];
 
 const out = (...args) => fs.writeSync(fh, ...args);
