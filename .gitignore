@@ -1,5 +1,6 @@
 build/
 src/settings.h
 src/data.c
+src/data.h
 src/waves.c
 test.mid

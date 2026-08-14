@@ -5,12 +5,10 @@
 
 #include "engine.h"
 #include "audio.h"
+#include "data.h"
 #include "envelope.h"
 #include "midi.h"
 #include "waves.h"
-
-extern uint32_t note_table[];
-extern uint16_t power_table[];
 
 //--------------------------------------------------------------------+
 // Utility functions

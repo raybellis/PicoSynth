@@ -1,5 +1,6 @@
 #include "pico.h"
 
+#include "data.h"
 #include "filter.h"
 
 // https://www.musicdsp.org/en/latest/Filters/23-state-variable.html
@@ -55,7 +56,6 @@ static inline int32_t clamp16(int32_t x)
 // path, same as SynthEngine::update that calls it
 void __not_in_flash_func(SVF::apply)(int16_t* buf, size_t n)
 {
-	extern const int16_t svf_table[];
 	int32_t f = svf_table[cutoff];
 	uint16_t scale = q;
 	int32_t high;

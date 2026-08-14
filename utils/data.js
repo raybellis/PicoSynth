@@ -19,6 +19,9 @@ const svf_len     = 128 * 128;
 
 const out = (...args) => fs.writeSync(fh, ...args);
 
+// every table generated below, so that data.h can declare them
+const tables = [];
+
 function generate(name, n, type, len, fn)
 {
 	let mask = Math.pow(2, len * 4) - 1;
@@ -33,11 +36,12 @@ function generate(name, n, type, len, fn)
 		out("\n");
 	}
 	out(`};\n\n`);
+	tables.push({ name, n, type });
 }
 
 let fh = fs.openSync('src/data.c', 'w');
 
-out(`#include <stdint.h>
+out(`#include "data.h"
 
 `);
 
@@ -68,6 +72,31 @@ generate("svf_table", svf_len, 'int16_t', 4, i => {
 	return Math.round(16384 * 2 * Math.sin(Math.PI * cutoff / sample_rate));
 });
 
+fs.closeSync(fh);
+
+// declare the tables in a header that data.c itself includes, so that
+// the definitions above and every user of them are checked against
+// one another instead of against hand-written externs
+fh = fs.openSync('src/data.h', 'w');
+out(`#pragma once
+
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+`);
+
+for (const t of tables) {
+	out(`extern const ${t.type} ${t.name}[${t.n}];\n`);
+}
+
+out(`
+#ifdef __cplusplus
+};
+#endif
+`);
 fs.closeSync(fh);
 
 fh = fs.openSync('src/settings.h', 'w');

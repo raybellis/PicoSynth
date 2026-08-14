@@ -1,10 +1,9 @@
 #include "hardware/interp.h"
 
 #include "voice.h"
+#include "data.h"
 #include "envelope.h"
 #include "waves.h"
-
-extern const uint32_t note_table[];
 
 //--------------------------------------------------------------------+
 // Per-voice state
