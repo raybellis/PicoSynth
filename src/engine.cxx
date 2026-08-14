@@ -134,11 +134,13 @@ uint32_t __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 		// generate a buffer full of (mono) samples
 		v.update(mono, n);
 
+		// apply the filter.  this has to happen even while the voice
+		// is inaudible, otherwise its state is stale by the time the
+		// level comes back up, and it clicks
+		v.filter->apply(mono, n);
+
 		// don't bother accumulating silent channels
 		if (!dca) continue;
-
-		// apply the filter
-		v.filter->apply(mono, n);
 
 		// accumulate the samples into the supplied output buffer
 		for (size_t i = 0, j = 0; i < n; ++i) {
