@@ -14,6 +14,9 @@ const buffer_size = +args[2];
 const wave_len    = (1 << wave_shift);
 const wave_max    = 0x10000 * wave_len;
 
+// 128 MIDI notes at 128 steps per semitone
+const svf_len     = 128 * 128;
+
 const out = (...args) => fs.writeSync(fh, ...args);
 
 function generate(name, n, type, len, fn)
@@ -68,5 +71,7 @@ out(`#pragma once
 #define WAVE_SHIFT  ${wave_shift}
 #define WAVE_LEN    ${wave_len}
 #define WAVE_MAX    0x${wave_max.toString(16)}
+
+#define SVF_LEN     ${svf_len}
 `);
 fs.closeSync(fh);

@@ -2,9 +2,11 @@
 
 // https://www.musicdsp.org/en/latest/Filters/23-state-variable.html
 
+// cutoff is in units of 1/128th of a semitone, and indexes directly
+// into the generated tables, so it must stay within their bounds
 void Filter::set_cutoff(uint16_t n)
 {
-	cutoff = n;
+	cutoff = (n < SVF_LEN) ? n : (SVF_LEN - 1);
 }
 
 void Filter::set_q(uint16_t _q)
@@ -28,8 +30,8 @@ static inline int32_t fmul_su(int32_t a, int32_t s)
 
 void SVF::apply(int16_t* buf, size_t n)
 {
-	extern uint16_t* svf_table;
-	uint16_t f = svf_table[cutoff];
+	extern const int16_t svf_table[];
+	int32_t f = svf_table[cutoff];
 	uint16_t scale = q;
 	int32_t high;
 

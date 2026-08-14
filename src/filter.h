@@ -3,6 +3,8 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "settings.h"
+
 class Filter {
 
 protected:
