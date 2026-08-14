@@ -32,127 +32,15 @@ static inline void frequency_modulate(uint32_t& step, int16_t x)
 }
 
 //--------------------------------------------------------------------+
-// Per-voice state
-//--------------------------------------------------------------------+
-
-void Voice::init()
-{
-	free = true;
-	steal = false;
-	channel = nullptr;
-	patch = nullptr;
-	dca_env = nullptr;
-	dco_env = nullptr;
-	filter = nullptr;
-}
-
-Voice::Voice()
-{
-	init();
-}
-
-void Voice::update(int16_t* samples, size_t n)
-{
-	// copy voice state to the interpolator
-	interp0->base[0] = dco_step;
-	interp0->base[2] = (uint32_t)waves[patch->dco_wave];
-	interp0->accum[0] = dco_pos;
-
-	// generate the samples
-	for (uint i = 0; i < n; ++i) {
-		samples[i] = *(int16_t*)interp0->pop[2];
-	}
-
-	// update voice state
-	dco_pos = interp0->accum[0] & (wave_max - 1);
-}
-
-void Voice::note_on(uint8_t _chan, uint8_t _note, uint8_t _vel)
-{
-
-	// remember note parameters
-	note = _note;
-	vel = _vel;
-
-	// load the current patch parameters
-	auto& p = *patch;
-
-	// set up the DCA envelope
-	dca_env = new ADSR(p.dca_env_a, p.dca_env_d, p.dca_env_s, p.dca_env_r);
-	dca_env->gate_on();
-
-	// set up the DCO envelope
-	if (p.dco_env_level) {
-		dco_env = new ADSR(p.dco_env_a, p.dco_env_d, p.dco_env_s, p.dco_env_r);
-		dco_env->gate_on();
-	}
-
-	// setup DCO
-	dco_step_base = note_table[note];
-	dco_pos = 0;
-
-	// set up the filter
-	filter = new SVF();
-	filter->set_cutoff(8192);
-	filter->set_q(16384);
-}
-
-void Voice::note_off()
-{
-	dca_env->gate_off();
-
-	if (dco_env) {
-		dco_env->gate_off();
-	}
-
-	steal = true;		// voice may now be stolen
-}
-
-//--------------------------------------------------------------------+
 // Core synth engine
 //--------------------------------------------------------------------+
 
 SynthEngine::SynthEngine()
 {
-	// all voices start out unused
-	for (auto& v : voice) {
-		v.init();
-	}
-
 	// set all channels to a default preset
 	for (uint8_t c = 0; c < 16; ++c) {
 		midi_in(0xc0 + c, c, 0);
 	}
-}
-
-void SynthEngine::deallocate(Voice& v)
-{
-	delete v.dca_env;
-	delete v.dco_env;
-	delete v.filter;
-	v.init();
-}
-
-Voice* SynthEngine::allocate()
-{
-	// look for a spare voice
-	for (auto& v: voice) {
-		if (v.free) {
-			v.free = false;
-			v.steal = false;
-			return &v;
-		}
-	}
-
-	// none-found, we need to steal
-	for (auto& v: voice) {
-		if (v.steal) {
-			deallocate(v);
-			return &v;
-		}
-	}
-
-	return nullptr;
 }
 
 // temporary buffer of mono samples
@@ -164,12 +52,10 @@ uint32_t __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 
 	// update all envelopes and release any voice
 	// that now has an inactive DCA
-	for (auto& v: voice) {
-		if (v.free) continue;
-
+	for (auto& v: pool) {
 		v.dca_env->update();
 		if (!v.dca_env->active()) {
-			deallocate(v);
+			pool.release(v);
 			continue;
 		}
 
@@ -189,13 +75,9 @@ uint32_t __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 	interp_config_set_add_raw(&cfg, true);
 	interp_set_config(interp0, 0, &cfg);
 
-	for (auto& v : voice) {
-
-		// voice not in use
-		if (v.free) continue;
+	for (auto& v : pool) {
 
 		// get a reference to the channel parameters
-		assert(v.chan < 0x10);
 		auto& chan = *v.channel;
 
 		// and a reference to the current note's patch
@@ -270,7 +152,7 @@ uint32_t __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 
 void SynthEngine::note_on(uint8_t chan, uint8_t note, uint8_t vel)
 {
-	auto* vp = allocate();
+	auto* vp = pool.allocate();
 	if (vp) {
 		auto& v = *vp;
 		v.channel = &channel[chan];
@@ -282,8 +164,7 @@ void SynthEngine::note_on(uint8_t chan, uint8_t note, uint8_t vel)
 void SynthEngine::note_off(uint8_t chan, uint8_t note, uint8_t vel)
 {
 	Channel* c = &channel[chan];
-	for (auto& v: voice) {
-		if (v.free) continue;
+	for (auto& v: pool) {
 		if (v.channel == c && v.note == note) {
 			v.note_off();
 		}

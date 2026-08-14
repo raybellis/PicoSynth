@@ -66,6 +66,7 @@ add_executable(${PROJECT}
 	src/usb_descriptors.c
 	src/audio.c
 	src/engine.cxx
+	src/voice.cxx
 	src/channel.cxx
 	src/envelope.cxx
 	src/filter.cxx
