@@ -163,8 +163,11 @@ and that is the obvious next thing to do. There is still no filter envelope.
 The two filter controllers follow the MIDI sound-controller convention of offsetting the patch
 around a centre of 64 rather than replacing it (`cc_offset` in `engine.cxx`), which is why
 `Channel()` has to centre them at construction — left at zero they would close every filter to MIDI
-note 0. One consequence is that the ends of a parameter's range are only reachable if the patch's
-own value is near the middle: at `vcf_reso` = 21 a full CC 71 reaches Q ≈ 16, not 64.
+note 0. One consequence is that a parameter's full range is only reachable when the patch's own
+value is 64, which is why both `vcf_freq` and `vcf_reso` are 64 in every preset — at `vcf_reso` =
+21 a full CC 71 would only reach Q ≈ 16. That ties the presets' default resonance to the middle of
+`q_table`, which is Q ≈ 8 because the table is geometric; if a milder default is wanted without
+giving up the range, it is the table's curve that needs changing, not the preset.
 
 Unlike the rest of the per-voice parameters, the filter is configured in `SynthEngine::update`
 rather than latched in `Voice::note_on`, so that moving a controller affects notes already
