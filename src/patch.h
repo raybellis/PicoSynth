@@ -18,6 +18,9 @@ typedef struct {
 	uint8_t				dco_env_s;
 	uint8_t				dco_env_r;
 
+	uint8_t				vcf_freq;
+	uint8_t				vcf_reso;
+
 	uint8_t				lfo_wave;
 	uint8_t				lfo_depth;
 	uint8_t				lfo_freq;

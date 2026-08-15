@@ -67,10 +67,12 @@ void Voice::note_on(uint8_t _chan, uint8_t _note, uint8_t _vel)
 	dco_step_base = note_table[note];
 	dco_pos = 0;
 
-	// set up the filter
+	// set up the filter.  the cutoff is a MIDI note number in units of
+	// 1/128th of a semitone, so the patch's 7-bit value scales up to
+	// give one entry per semitone, and the resonance indexes q_table
 	filter = new SVF();
-	filter->set_cutoff(8192);
-	filter->set_q(16384);
+	filter->set_cutoff(p.vcf_freq << 7);
+	filter->set_q(q_table[p.vcf_reso & (SVF_Q_LEN - 1)]);
 }
 
 void Voice::note_off()
