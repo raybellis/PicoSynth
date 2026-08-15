@@ -75,6 +75,28 @@ generate("svf_table", svf_len, 'int16_t', 4, i => {
 	return Math.round(16384 * 2 * Math.sin(Math.PI * cutoff / sample_rate));
 });
 
+// the damping factor is 1:15 fixed point holding 1/Q, and it scales
+// the filter's input as well as its feedback, so the passband sits at
+// 1/Q while the resonant peak stays at unity.
+//
+// that makes 1.0 the ceiling: above it the filter has gain at DC and
+// clips a full scale voice.  it is also well inside the stability
+// bound for this topology, q < 2/f - f/2, which bottoms out at 1.5
+// where svf_table clamps at Fs/6.
+//
+// the floor is where the resonance stops improving - by Q=64 rounding
+// in the integrators has eaten a fifth of the peak, and past a few
+// hundred there is no peak left to speak of
+const svf_q_max = 32768;			// Q = 1
+const svf_q_min = 512;				// Q = 64
+const svf_q_len = 128;				// one entry per 7-bit patch value
+
+// geometric, so that each step is a constant increment in the dB of
+// resonant emphasis (36 dB across the range, about 0.28 dB a step)
+generate("q_table", svf_q_len, 'uint16_t', 4, i =>
+	Math.round(svf_q_max * Math.pow(svf_q_min / svf_q_max, i / (svf_q_len - 1)))
+);
+
 fs.closeSync(fh);
 
 // declare the tables in a header that data.c itself includes, so that
@@ -113,5 +135,7 @@ out(`#pragma once
 #define WAVE_MAX    0x${wave_max.toString(16)}
 
 #define SVF_LEN     ${svf_len}
+#define SVF_Q_LEN   ${svf_q_len}
+#define SVF_Q_MAX   ${svf_q_max}
 `);
 fs.closeSync(fh);

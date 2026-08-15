@@ -12,9 +12,15 @@ void Filter::set_cutoff(uint16_t n)
 	cutoff = (n < SVF_LEN) ? n : (SVF_LEN - 1);
 }
 
-void Filter::set_q(uint16_t _q)
+// q is the 1:15 damping factor 1/Q, and it scales the filter's input
+// as well as its feedback.  above 1.0 that gives the filter gain at DC
+// and clips a full scale voice, so SVF_Q_MAX caps it there - which
+// also keeps it inside the topology's stability limit, and well clear
+// of the point where fmul_f(high, f) would overflow.  use q_table to
+// map a 7-bit parameter into the range below it
+void Filter::set_q(uint16_t n)
 {
-	q = _q;
+	q = (n < SVF_Q_MAX) ? n : SVF_Q_MAX;
 }
 
 SVF::SVF() :
