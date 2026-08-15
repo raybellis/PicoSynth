@@ -10,6 +10,12 @@ Channel::Channel() :
 {
 	set_cc(volume, 127);
 	set_cc(pan, 64);
+
+	// these two offset the patch either side of centre, so they have
+	// to start centred - left at zero they would close every filter
+	set_cc(brightness, 64);
+	set_cc(resonance, 64);
+
 	set_bend(0, 64);
 }
 

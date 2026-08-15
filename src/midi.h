@@ -8,5 +8,10 @@ enum CC : uint8_t {
 	pan			= 10,
 	expression	= 11,
 	sustain		= 64,
-	portamento	= 65
+	portamento	= 65,
+
+	// sound controllers, which offset the patch either side of 64
+	// rather than setting it outright
+	resonance	= 71,
+	brightness	= 74
 };

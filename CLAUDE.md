@@ -156,11 +156,20 @@ table, so they cannot drift apart. The exact stability bound for this update ord
 ## Current state (branch `filter`)
 
 Work in progress on a state-variable filter (`src/filter.{h,cxx}`, per-voice), now driven by the
-`vcf_freq` / `vcf_reso` fields of `Patch`. `Voice::note_on` scales `vcf_freq` up by 128 (the cutoff
-index is in 1/128ths of a semitone) and looks `vcf_reso` up in `q_table`. All four presets are set
-to the values the code used to hard-code, so they sound as they did — they have not been tuned by
-ear, and that is the obvious next thing to do. There is still no filter envelope, and no CC mapped
-to either parameter.
+`vcf_freq` / `vcf_reso` fields of `Patch`, offset by CC 74 and CC 71. All four presets are set to
+the values the code used to hard-code, so they sound as they did — they have not been tuned by ear,
+and that is the obvious next thing to do. There is still no filter envelope.
+
+The two filter controllers follow the MIDI sound-controller convention of offsetting the patch
+around a centre of 64 rather than replacing it (`cc_offset` in `engine.cxx`), which is why
+`Channel()` has to centre them at construction — left at zero they would close every filter to MIDI
+note 0. One consequence is that the ends of a parameter's range are only reachable if the patch's
+own value is near the middle: at `vcf_reso` = 21 a full CC 71 reaches Q ≈ 16, not 64.
+
+Unlike the rest of the per-voice parameters, the filter is configured in `SynthEngine::update`
+rather than latched in `Voice::note_on`, so that moving a controller affects notes already
+sounding. That makes the coefficients step once per buffer (172 Hz at the default settings), which
+is normal for block-based synthesis but can zipper on a fast sweep at high resonance.
 
 None of the recent filter work has been verified on hardware; it is backed by compilation,
 disassembly, symbol placement and numerical simulation only.

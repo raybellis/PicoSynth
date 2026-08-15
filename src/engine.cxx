@@ -29,6 +29,18 @@ static inline void frequency_modulate(uint32_t& step, int16_t x)
 	step = r1 + (r2 >> 16);
 }
 
+// combines a 7-bit patch parameter with its controller, which offsets
+// it either side of centre, and holds the result in range
+static inline uint8_t cc_offset(uint8_t base, uint8_t cc)
+{
+	int16_t v = (int16_t)base + cc - 64;
+
+	if (v < 0) return 0;
+	if (v > 127) return 127;
+
+	return v;
+}
+
 //--------------------------------------------------------------------+
 // Core synth engine
 //--------------------------------------------------------------------+
@@ -131,6 +143,13 @@ uint32_t __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 
 		// generate a buffer full of (mono) samples
 		v.update(mono, n);
+
+		// set the filter from the patch, offset by the channel's two
+		// sound controllers.  this is done per buffer rather than at
+		// note-on so that moving a controller takes effect on notes
+		// that are already sounding
+		v.filter->set_cutoff(cc_offset(p.vcf_freq, chan.control[brightness]) << 7);
+		v.filter->set_q(q_table[cc_offset(p.vcf_reso, chan.control[resonance])]);
 
 		// apply the filter.  this has to happen even while the voice
 		// is inaudible, otherwise its state is stale by the time the
