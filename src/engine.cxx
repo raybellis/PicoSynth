@@ -149,7 +149,7 @@ uint32_t __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 		// note-on so that moving a controller takes effect on notes
 		// that are already sounding
 		v.filter->set_cutoff(cc_offset(p.vcf_freq, chan.control[brightness]) << 7);
-		v.filter->set_q(q_table[cc_offset(p.vcf_reso, chan.control[resonance])]);
+		v.filter->set_q(cc_offset(p.vcf_reso, chan.control[resonance]));
 
 		// apply the filter.  this has to happen even while the voice
 		// is inaudible, otherwise its state is stale by the time the

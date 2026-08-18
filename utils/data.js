@@ -93,8 +93,36 @@ const svf_q_len = 128;				// one entry per 7-bit patch value
 
 // geometric, so that each step is a constant increment in the dB of
 // resonant emphasis (36 dB across the range, about 0.28 dB a step)
-generate("q_table", svf_q_len, 'uint16_t', 4, i =>
+const q_values = Array(svf_q_len).fill(0).map((e, i) =>
 	Math.round(svf_q_max * Math.pow(svf_q_min / svf_q_max, i / (svf_q_len - 1)))
+);
+
+// nothing in the table may exceed 1.0, both because the filter would
+// have gain at DC above that and because set_q no longer range checks
+// the value itself, only the index
+if (q_values.some(q => q > svf_q_max || q < 1)) {
+	throw new Error("q_table out of range");
+}
+
+generate("q_table", svf_q_len, 'uint16_t', 4, i => q_values[i]);
+
+// the filter scales its input by this alongside the damping, which is
+// what places the response in absolute terms: the resonant peak sits
+// a factor of Q above the passband whatever happens, and all this
+// chooses is which of the two is held at unity.
+//
+// scaling by q itself would pin the peak at unity and let the
+// passband fall away as 1/Q - 36 dB by the top of the range, which is
+// far more bass loss than is wanted.  the geometric mean of q and 1.0
+// splits the difference evenly in dB, halving the droop to 18 dB in
+// exchange for the peak rising by the same amount.
+//
+// note that this stays at or below 1.0 for every entry, since q does
+// too, so it costs nothing in the headroom that keeps fmul_f(high, f)
+// from overflowing.  a table that boosted above unity would not be
+// safe without fixing that first
+generate("scale_table", svf_q_len, 'uint16_t', 4, i =>
+	Math.round(Math.sqrt(svf_q_max * q_values[i]))
 );
 
 fs.closeSync(fh);

@@ -12,15 +12,20 @@ void Filter::set_cutoff(uint16_t n)
 	cutoff = (n < SVF_LEN) ? n : (SVF_LEN - 1);
 }
 
-// q is the 1:15 damping factor 1/Q, and it scales the filter's input
-// as well as its feedback.  above 1.0 that gives the filter gain at DC
-// and clips a full scale voice, so SVF_Q_MAX caps it there - which
-// also keeps it inside the topology's stability limit, and well clear
-// of the point where fmul_f(high, f) would overflow.  use q_table to
-// map a 7-bit parameter into the range below it
+// n is a 7-bit resonance parameter indexing q_table, which maps it
+// onto Q = 1 .. 64 as the 1:15 damping factor 1/Q, and scale_table
+// alongside it, which is what the input gets scaled by.  taking the
+// pair from generated tables is what keeps the damping inside the
+// range where the filter is stable and fmul_f(high, f) cannot
+// overflow - there is no value of n that escapes it
 void Filter::set_q(uint16_t n)
 {
-	q = (n < SVF_Q_MAX) ? n : SVF_Q_MAX;
+	if (n >= SVF_Q_LEN) {
+		n = SVF_Q_LEN - 1;
+	}
+
+	q = q_table[n];
+	scale = scale_table[n];
 }
 
 SVF::SVF() :
@@ -63,9 +68,14 @@ static inline int32_t clamp16(int32_t x)
 void __not_in_flash_func(SVF::apply)(int16_t* buf, size_t n)
 {
 	int32_t f = svf_table[cutoff];
-	uint16_t scale = q;
 	int32_t high;
 
+	// q and scale are deliberately left as member reads.  buf is an
+	// int16_t* and they are uint16_t, so those two may alias and the
+	// compiler reloads both every iteration - but hoisting them into
+	// locals measured two instructions a sample *worse*, because on
+	// M0+ the extra live values land in high registers and every muls
+	// then needs a mov down to a low one
 	for (size_t i = 0; i < n; ++i) {
 		int32_t input = buf[i];
 
