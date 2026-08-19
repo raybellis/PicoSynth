@@ -42,6 +42,11 @@ if (${CONFIG_LCD_ACTIVE})
 	include($ENV{PICO_HOME}/pimoroni-pico/pimoroni_pico_import.cmake)
 endif()
 
+# write a compile_commands.json out into the build tree.  an editor
+# has no other way to find either the SDK's headers or the generated
+# ones, since neither is anywhere near the source
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 # set up project and SDK
 project(${PROJECT} C CXX ASM)
 
