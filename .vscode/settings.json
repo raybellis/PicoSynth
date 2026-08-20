@@ -1,0 +1,22 @@
+{
+    "cmake.environment": {
+        "PICO_SDK_PATH": "/opt/pico/pico-sdk",
+        "PICO_EXTRAS_PATH": "/opt/pico/pico-extras",
+        "PICO_HOME": "/opt/pico"
+    },
+
+    // keep CMake Tools out of build/, which is configured from the
+    // command line and whose cache pins PICO_PLATFORM and PICO_BOARD -
+    // a configure here with a different kit would overwrite it
+    "cmake.buildDirectory": "${workspaceFolder}/build-vscode",
+    "cmake.configureOnOpen": false,
+
+    // clangd reads the compile database from the command line build,
+    // which is the one that has the generated headers in it.
+    // --query-driver is what lets it ask the cross compiler where its
+    // own system headers live
+    "clangd.arguments": [
+        "--compile-commands-dir=${workspaceFolder}/build",
+        "--query-driver=/opt/local/bin/arm-none-eabi-*"
+    ]
+}
