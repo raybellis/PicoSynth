@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A polyphonic wavetable synthesizer firmware for the Raspberry Pi Pico (RP2040, overclocked to 250 MHz),
+A polyphonic wavetable synthesizer firmware for the Raspberry Pi Pico 2 (RP2350, overclocked to 250 MHz),
 16-channel multi-timbral, 16-bit stereo I2S out at 44.1 kHz, driven by USB MIDI and serial MIDI.
 GPLv3. There is no test suite — verification is by flashing hardware and listening.
 
@@ -30,9 +30,11 @@ code size and disassembly — useful when tuning the audio inner loop).
 
 The user's shell is tcsh; use `setenv`, not `export`, in any suggested shell snippets.
 
-The build is pinned to RP2040 in the existing cache (`PICO_PLATFORM=rp2040`, `PICO_BOARD=pico`);
-the in-flight RP2350 work therefore needs a separate build directory rather than a reconfigure of
-`build/`, since the platform is not re-derivable from a cached tree.
+The target device is `CONFIG_PICO_PLATFORM` / `CONFIG_PICO_BOARD` at the top of `CMakeLists.txt`,
+presently `rp2350` / `pico2`, and pushed into `PICO_PLATFORM` / `PICO_BOARD` before the SDK import
+because that is what settles the compiler flags. A build directory bakes the platform into its
+cache and cannot be retargeted in place, so changing those means deleting `build/` and configuring
+it again — `make` alone will not notice, and neither will `cmake -B build` over the old tree.
 
 ## Flashing and printf debugging
 
@@ -162,10 +164,18 @@ and `buf` is `int16_t*`, so they may alias and the compiler does reload both eve
 hoisting measured two instructions a sample worse, because on M0+ the extra live values land in
 high registers and every `muls` then needs a `mov` down to a low one.
 
-**RP2040 hardware used directly:** `interp0` in blend/wave-lookup mode is the wavetable oscillator
+**Hardware used directly:** `interp0` in blend/wave-lookup mode is the wavetable oscillator
 (shift 15, mask `wave_shift`, raw add) — `Voice::update` loads the step/base/accum and pops samples;
 `hw_divider` for bend scaling; SysTick as a cycle counter via `bench.h` (`bench_delta` handles the
 24-bit wrap), reported as min/max microsecond-ish figures on the LCD.
+
+All three survive the move to RP2350: the interpolators exist on both, and `hardware_divider` is
+real silicon on RP2040 but a software emulation (`divider.c`, selected by the `else()` in its
+`CMakeLists.txt`) on RP2350, with the same API — so nothing had to change. The one place the two
+parts genuinely differ is `frequency_modulate` in `engine.cxx`, which decomposes a 32×32 multiply
+into 16-bit halves because ARMv6-M has no `UMULL`. On the M33 that is now slower than just writing
+`(uint64_t)step * mul`, which compiles to a single `umull` — the hand-rolled version is still what
+is compiled, and is worth revisiting.
 
 ## Current state (branch `filter`)
 

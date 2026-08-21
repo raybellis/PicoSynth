@@ -7,6 +7,12 @@ set(PROJECT PicoSynth)
 #
 #----------------------------------------------------------------------
 
+# target device.  a build directory bakes these into its cache and
+# can't be moved between them, so switching target means configuring
+# a new one rather than re-running cmake over the old
+set(CONFIG_PICO_PLATFORM rp2350)
+set(CONFIG_PICO_BOARD    pico2)
+
 # audio parameters
 set(CONFIG_SAMPLE_RATE 44100)
 set(CONFIG_WAVE_SHIFT  11)
@@ -34,7 +40,11 @@ endif()
 
 #----------------------------------------------------------------------
 
-# import required SDKs
+# import required SDKs.  the platform has to be settled before the SDK
+# is imported, since that is what picks the compiler flags
+
+set(PICO_PLATFORM ${CONFIG_PICO_PLATFORM})
+set(PICO_BOARD ${CONFIG_PICO_BOARD})
 
 include($ENV{PICO_SDK_PATH}/external/pico_sdk_import.cmake)
 include($ENV{PICO_EXTRAS_PATH}/external/pico_extras_import.cmake)
