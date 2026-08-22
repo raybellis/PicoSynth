@@ -1,6 +1,6 @@
 # PicoSynth
 
-A polyphonic wavetable synthesizer for the Raspberry Pi Pico.
+A polyphonic wavetable synthesizer for the Raspberry Pi Pico 2.
 
 (C) Ray Bellis 2023-2024
 
@@ -8,11 +8,11 @@ NB: this is very much a work in progress!
 
 ## Current Features
 
-- 128 voices
+- 64 voices (was 128 before the per-voice filter was added)
 - 16 channel multi-timbral
 - four hard-coded presets
 - 16-bit stereo I2S audio at 44.1kHz 
-- wavetable DCOs (2048 x 16-bit samples) using the RP2040 interpolator
+- wavetable DCOs (2048 x 16-bit samples) using the RP2350 interpolator
 - DCO modulation:
   - LFO (per voice)
   - ADSR pitch envelope
@@ -23,17 +23,24 @@ NB: this is very much a work in progress!
 - USB MIDI device
 - Serial MIDI (UART1, pins 4/5)
 
-The RP2040 is overclocked to 250 MHz.
+## Hardware
+
+A **Raspberry Pi Pico 2** (RP2350) is required — the RP2040 is no longer
+supported.  The audio path uses the M33's FPU and saturating and
+64-bit-multiply instructions, none of which exist on the RP2040's M0+.
+
+The RP2350 is overclocked to 250 MHz.
 
 The I2S interface is configured for use with the Pimoroni Audio Pack.  A
 PCB with MIDI DIN ports and I2S DAC is under development.
 
-The [Datanoise PicoADK](https://github.com/DatanoiseTV/PicoADK-Hardware)
-board is also supported via `CONFIG_HW_PICOADK` in the `CMakeLists.txt` file.
+`CONFIG_HW_PICOADK` in `CMakeLists.txt` still selects the pin assignments
+for the [Datanoise PicoADK](https://github.com/DatanoiseTV/PicoADK-Hardware),
+but that board is RP2040-based and so will not currently build.
 
 ## Building
 
-Familiarity with using the RP2040 Pico SDK is assumed.
+Familiarity with using the Pico SDK is assumed.
 
 My own development system is macOS and I use the arm-none-eabi-gcc
 compiler v13.2.0 from MacPorts.

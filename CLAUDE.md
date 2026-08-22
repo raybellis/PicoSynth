@@ -342,7 +342,12 @@ Numerically float is also a clear improvement: against a double-precision refere
 output clip, SNR went from 89–92 dB to 114–126 dB, bit-exact at low levels, and IEEE rounding makes
 the round-to-nearest care that the fixed-point integrators needed automatic.
 
-`README.md` advertises 128 voices; `VoicePool::nv` is presently 64. Trust the code.
+`VoicePool::nv` is 64, and `README.md` now agrees. It said 128 for a long time because 128 genuinely
+ran, *before the filter existed* — the filter is what changed the arithmetic. It is about half the
+per-sample work now (15 of the 32 instructions a voice costs per sample), so 128 voices would want
+roughly twice the 58.6% of the deadline that 64 currently measures, which does not fit. If the
+filter ever became optional per patch, the old number would come back within reach for patches that
+switch it off.
 
 Raising `nv` costs almost nothing in RAM — 44 bytes of `.bss` per voice, plus about 90 bytes of heap
 per *sounding* voice for its two envelopes and filter — so the limit is CPU, not memory. Every voice
