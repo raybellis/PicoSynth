@@ -54,9 +54,13 @@ SynthEngine::SynthEngine()
 // temporary buffer of mono samples
 static int16_t mono[BUFFER_SIZE];
 
+// returns the number of voices rendered, which is what the benchmark
+// figures need reading against - the pool iterator only visits voices
+// in use, and every one of them costs a full render and filter pass
+// whether or not its DCA has anything left to say
 uint32_t __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 {
-	uint32_t data = 0;
+	uint32_t voices = 0;
 
 	// update all envelopes and release any voice
 	// that now has an inactive DCA
@@ -84,6 +88,8 @@ uint32_t __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 	interp_set_config(interp0, 0, &cfg);
 
 	for (auto& v : pool) {
+
+		++voices;
 
 		// get a reference to the channel parameters
 		auto& chan = *v.channel;
@@ -118,8 +124,6 @@ uint32_t __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 		if (chan.bend) {
 			frequency_modulate(v.dco_step, chan.bend_f);
 		}
-		data = chan.bend_f + 8192;
-
 		// apply the DCO envelope
 		if (v.dco_env && p.dco_env_level) {
 			int32_t env = v.dco_env->level();	// 16 bits
@@ -168,7 +172,7 @@ uint32_t __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 		}
 	}
 
-	return data;
+	return voices;
 }
 
 void SynthEngine::note_on(uint8_t chan, uint8_t note, uint8_t vel)

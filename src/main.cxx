@@ -1,6 +1,4 @@
 #include <string>
-#include <sstream>
-#include <iomanip>
 
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
@@ -35,8 +33,8 @@ static queue_t midi_queue;
 static queue_t bench_queue;
 
 struct bench_entry {
-	uint32_t	delta;
-	uint32_t	data;
+	uint32_t	delta;			// nanoseconds, at 250 MHz
+	uint32_t	voices;			// how many were rendered for it
 };
 
 //--------------------------------------------------------------------+
@@ -241,12 +239,12 @@ void audio_task(void)
 	memset(samples, 0, sizeof(samples));
 
 	// get samples from the synth engine
-	uint32_t data = engine.update(samples, BUFFER_SIZE);
+	uint32_t voices = engine.update(samples, BUFFER_SIZE);
 
 	uint32_t t1 = bench_time();
 	bench_entry entry = {
 		4 * bench_delta(t0, t1),
-		data
+		voices
 	};
 
 	// dropping a benchmark sample is always better than stalling the
@@ -322,19 +320,11 @@ void lcd_init()
 // Benchmarking
 //--------------------------------------------------------------------+
 
-template <typename T>
-inline std::string int_to_hex(T val, size_t width=sizeof(T)*2)
-{
-    std::stringstream ss;
-    ss << std::setfill('0') << std::setw(width) << std::hex << (val|0);
-    return ss.str();
-}
-
 void benchmark_task()
 {
 	static uint32_t start_ms = 0;
 	static uint32_t bench_min = 0xffffffff, bench_max = 0;
-	static uint32_t data;
+	static uint32_t voices = 0, voices_max = 0;
 
 	bench_entry entry;
 	while (queue_try_remove(&bench_queue, &entry)) {
@@ -345,8 +335,10 @@ void benchmark_task()
 			bench_max = delta;
 		}
 
-		if (data != entry.data) {
-			data = entry.data;
+		// the latest count, and the high water mark since boot
+		voices = entry.voices;
+		if (voices > voices_max) {
+			voices_max = voices;
 		}
 	}
 
@@ -361,7 +353,8 @@ void benchmark_task()
 	graphics->set_pen(255, 255, 255);
 	graphics->text(std::to_string(bench_min), Point(4,  4), 120);
 	graphics->text(std::to_string(bench_max), Point(4, 20), 120);
-	graphics->text(int_to_hex(data), Point(4, 36), 120);
+	graphics->text(std::to_string(voices) + "/" + std::to_string(voices_max),
+		Point(4, 36), 120);
 	lcd->update(graphics);
 #endif
 }

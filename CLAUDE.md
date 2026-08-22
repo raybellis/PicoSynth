@@ -186,7 +186,14 @@ high registers and every `muls` then needs a `mov` down to a low one.
 `hw_divider` for bend scaling; SysTick as a cycle counter via `bench.h` (`bench_delta` handles the
 24-bit wrap).
 
-The two LCD figures are min/max **nanoseconds** — `bench_delta` counts `clk_sys` cycles and
+The LCD shows three lines: min and max **nanoseconds**, then the voice count as `now/peak`.
+`SynthEngine::update` returns how many voices it rendered — the pool iterator only visits voices in
+use, and each costs a full render and filter pass whether or not its DCA has anything left — so the
+third line is what the first two should be read against. Note that formatting it used to go through
+`std::stringstream`, which cost **264 KB** of flash for one hex number; `std::to_string` does the
+job, so don't reintroduce `<sstream>` here.
+
+The timing figures: `bench_delta` counts `clk_sys` cycles and
 `audio_task` multiplies by 4, one cycle being 4 ns at 250 MHz. The deadline is 5,805,000, one
 256-sample buffer at 44.1 kHz. Three things to know before trusting the number: it spans only the
 `memset` and `SynthEngine::update`, not the output copy or the audio buffer calls; `bench_min` and
