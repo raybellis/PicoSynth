@@ -72,6 +72,36 @@ void led_blinking_task(void)
 }
 
 //--------------------------------------------------------------------+
+// Display Pack RGB LED
+//--------------------------------------------------------------------+
+
+// the Pimoroni Display Pack's RGB LED, wired common anode - driving a
+// pin low lights it, high turns it off.  Pimoroni's own driver PWMs
+// these through hardware_pwm; plain GPIO is enough for an indicator,
+// and avoids claiming a PWM slice for it
+enum {
+	RGB_R = 6,
+	RGB_G = 7,
+	RGB_B = 8,
+};
+
+static const uint rgb_pins[] = { RGB_R, RGB_G, RGB_B };
+
+static void rgb_init()
+{
+	for (uint pin : rgb_pins) {
+		gpio_init(pin);
+		gpio_set_dir(pin, GPIO_OUT);
+		gpio_put(pin, 1);				// off
+	}
+}
+
+static inline void rgb_set(uint pin, bool on)
+{
+	gpio_put(pin, !on);
+}
+
+//--------------------------------------------------------------------+
 // MIDI packet dispatch
 //--------------------------------------------------------------------+
 
@@ -219,9 +249,22 @@ void audio_task(void)
 		data
 	};
 
-	queue_add_blocking(&bench_queue, &entry);
+	// dropping a benchmark sample is always better than stalling the
+	// audio for one.  the queue holds 64 entries, which is only 371 ms
+	// at 44.1 kHz, so blocking here hands core 0 the power to silence
+	// core 1 just by being busy for a third of a second
+	queue_try_add(&bench_queue, &entry);
 
-	struct audio_buffer *buffer = take_audio_buffer(ap, true);
+	// asking take_audio_buffer to block deadlocks on core 1: it waits
+	// on __wfe(), and the wake never comes, because the DMA interrupt
+	// that frees buffers belongs to core 0, where audio_init() ran.
+	// polling sees exactly the same buffers come back, and this core
+	// has nothing else it should be doing anyway
+	struct audio_buffer *buffer;
+	while (!(buffer = take_audio_buffer(ap, false))) {
+		tight_loop_contents();
+	}
+
 	int16_t *out = (int16_t *) buffer->buffer->bytes;
 
 	for (auto i = 0U; i < 2 * buffer->max_sample_count; ++i) {
@@ -331,9 +374,22 @@ int main() {
 
 	stdio_init_all();
 
+	// these float at reset, so drive them off before anything else -
+	// and before the one case below that wants to light one
+	rgb_init();
+
 	vreg_set_voltage(VREG_VOLTAGE_1_30);
 	sleep_ms(1);
-	set_sys_clock_khz(250000, false);
+
+	// this is asked for, not required, so it returns false rather than
+	// panicking if it can't be had.  that matters more than it looks:
+	// the bench figures scale cycles to nanoseconds assuming 250 MHz,
+	// so a silent failure would misreport the audio budget by 1.67x
+	if (!set_sys_clock_khz(250000, false)) {
+		rgb_set(RGB_R, true);
+		printf("clock: set_sys_clock_khz(250000) failed, still at %lu Hz\n",
+			(unsigned long)clock_get_hz(clk_sys));
+	}
 
 	board_init();
 	ap = audio_init();

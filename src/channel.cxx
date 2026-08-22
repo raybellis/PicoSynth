@@ -2,6 +2,7 @@
 
 #include "hardware/divider.h"
 #include "channel.h"
+#include "data.h"
 #include "midi.h"
 
 Channel::Channel() :
@@ -9,6 +10,12 @@ Channel::Channel() :
 {
 	set_cc(volume, 127);
 	set_cc(pan, 64);
+
+	// these two offset the patch either side of centre, so they have
+	// to start centred - left at zero they would close every filter
+	set_cc(brightness, 64);
+	set_cc(resonance, 64);
+
 	set_bend(0, 64);
 }
 
@@ -22,7 +29,6 @@ void Channel::set_cc(uint8_t cc, uint8_t v)
 	control[cc] = v;
 
 	if (cc == pan) {	// zero = hard left
-		extern uint8_t pan_table[];
 		pan_l = pan_table[127 - v];
 		pan_r = pan_table[v];
 	}

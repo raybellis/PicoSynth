@@ -5,12 +5,10 @@
 
 #include "engine.h"
 #include "audio.h"
+#include "data.h"
 #include "envelope.h"
 #include "midi.h"
 #include "waves.h"
-
-extern uint32_t note_table[];
-extern uint16_t power_table[];
 
 //--------------------------------------------------------------------+
 // Utility functions
@@ -20,86 +18,25 @@ extern uint16_t power_table[];
 /// 1:15 fixed-point log2 multipliers for x = 0.500 ..< 2.000
 static inline void frequency_modulate(uint32_t& step, int16_t x)
 {
-	uint32_t mul = power_table[x + 8192] << 1;
+	uint32_t mul = power_table[x + 8192] << 1;	// 1:16
 
-	uint32_t msb = (step >> 16) & 0xffff;
-	uint32_t lsb = step & 0xffff;
-
-	uint32_t r1 = (msb * mul);
-	uint32_t r2 = (lsb * mul);
-
-	step = r1 + (r2 >> 16);
+	// the product needs 48 bits.  this used to be split into 16-bit
+	// halves and reassembled, because ARMv6-M has no 32x32->64
+	// multiply; the M33 does, so one umull covers it.  the result is
+	// bit identical - the old form was exactly this sum
+	step = ((uint64_t)step * mul) >> 16;
 }
 
-//--------------------------------------------------------------------+
-// Per-voice state
-//--------------------------------------------------------------------+
-
-void Voice::init()
+// combines a 7-bit patch parameter with its controller, which offsets
+// it either side of centre, and holds the result in range
+static inline uint8_t cc_offset(uint8_t base, uint8_t cc)
 {
-	free = true;
-	steal = false;
-	channel = nullptr;
-	patch = nullptr;
-	dca_env = nullptr;
-	dco_env = nullptr;
-}
+	int16_t v = (int16_t)base + cc - 64;
 
-Voice::Voice()
-{
-	init();
-}
+	if (v < 0) return 0;
+	if (v > 127) return 127;
 
-void Voice::update(int16_t* samples, size_t n)
-{
-	// copy voice state to the interpolator
-	interp0->base[0] = dco_step;
-	interp0->base[2] = (uint32_t)waves[patch->dco_wave];
-	interp0->accum[0] = dco_pos;
-
-	// generate the samples
-	for (uint i = 0; i < n; ++i) {
-		samples[i] = *(int16_t*)interp0->pop[2];
-	}
-
-	// update voice state
-	dco_pos = interp0->accum[0] & (wave_max - 1);
-}
-
-void Voice::note_on(uint8_t _chan, uint8_t _note, uint8_t _vel)
-{
-
-	// remember note parameters
-	note = _note;
-	vel = _vel;
-
-	// load the current patch parameters
-	auto& p = *patch;
-
-	// set up the DCA envelope
-	dca_env = new ADSR(p.dca_env_a, p.dca_env_d, p.dca_env_s, p.dca_env_r);
-	dca_env->gate_on();
-
-	// set up the DCO envelope
-	if (p.dco_env_level) {
-		dco_env = new ADSR(p.dco_env_a, p.dco_env_d, p.dco_env_s, p.dco_env_r);
-		dco_env->gate_on();
-	}
-
-	// setup DCO
-	dco_step_base = note_table[note];
-	dco_pos = 0;
-}
-
-void Voice::note_off()
-{
-	dca_env->gate_off();
-
-	if (dco_env) {
-		dco_env->gate_off();
-	}
-
-	steal = true;		// voice may now be stolen
+	return v;
 }
 
 //--------------------------------------------------------------------+
@@ -108,44 +45,10 @@ void Voice::note_off()
 
 SynthEngine::SynthEngine()
 {
-	// all voices start out unused
-	for (auto& v : voice) {
-		v.init();
-	}
-
 	// set all channels to a default preset
 	for (uint8_t c = 0; c < 16; ++c) {
 		midi_in(0xc0 + c, c, 0);
 	}
-}
-
-void SynthEngine::deallocate(Voice& v)
-{
-	delete v.dca_env;
-	delete v.dco_env;
-	v.init();
-}
-
-Voice* SynthEngine::allocate()
-{
-	// look for a spare voice
-	for (auto& v: voice) {
-		if (v.free) {
-			v.free = false;
-			v.steal = false;
-			return &v;
-		}
-	}
-
-	// none-found, we need to steal
-	for (auto& v: voice) {
-		if (v.steal) {
-			deallocate(v);
-			return &v;
-		}
-	}
-
-	return nullptr;
 }
 
 // temporary buffer of mono samples
@@ -157,12 +60,10 @@ uint32_t __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 
 	// update all envelopes and release any voice
 	// that now has an inactive DCA
-	for (auto& v: voice) {
-		if (v.free) continue;
-
+	for (auto& v: pool) {
 		v.dca_env->update();
 		if (!v.dca_env->active()) {
-			deallocate(v);
+			pool.release(v);
 			continue;
 		}
 
@@ -182,20 +83,22 @@ uint32_t __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 	interp_config_set_add_raw(&cfg, true);
 	interp_set_config(interp0, 0, &cfg);
 
-	for (auto& v : voice) {
-
-		// voice not in use
-		if (v.free) continue;
+	for (auto& v : pool) {
 
 		// get a reference to the channel parameters
-		assert(v.chan < 0x10);
 		auto& chan = *v.channel;
 
 		// and a reference to the current note's patch
 		auto& p = *v.patch;
 
+		// the chain is 15 + 7 + 7 + 7 + 7 = 43 bits.  the 32-bit form
+		// had to shift twice partway through to stay in range, losing
+		// 11 bits, and still finished within 1% of overflowing
+		// uint32_t on the last multiply.  the M33 carries all 43 bits,
+		// so the final shift is the only rounding left
+
 		// get the 15-bit DCA current envelope level
-		uint32_t dca = v.dca_env->level();		// 15 bits
+		uint64_t dca = v.dca_env->level();		// 15 bits
 
 		// scale the DCA by the patch's 7-bit DCA master level
 		dca *= p.dca_env_level;					// 22 bits
@@ -204,13 +107,11 @@ uint32_t __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 		dca *= v.vel;							// 29 bits
 
 		// scale the DCA by the 7-bit channel volume
-		dca >>= 7;								// 22 bits
-		dca *= chan.control[volume];			// 29 bits
-		dca >>= 4;								// 25 bits
+		dca *= chan.control[volume];			// 36 bits
 
 		// apply 7-bit pan and scale back to 16 bits
-		uint16_t level_l = (dca * chan.pan_l) >> 16;
-		uint16_t level_r = (dca * chan.pan_r) >> 16;
+		uint16_t level_l = (dca * chan.pan_l) >> 27;	// 43 - 27
+		uint16_t level_r = (dca * chan.pan_r) >> 27;
 
 		// scale the DCO step by the current pitchbend amount
 		v.dco_step = v.dco_step_base;
@@ -245,7 +146,17 @@ uint32_t __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 		// generate a buffer full of (mono) samples
 		v.update(mono, n);
 
-		// TODO: apply filters here
+		// set the filter from the patch, offset by the channel's two
+		// sound controllers.  this is done per buffer rather than at
+		// note-on so that moving a controller takes effect on notes
+		// that are already sounding
+		v.filter->set_cutoff(cutoff_table[cc_offset(p.vcf_freq, chan.control[brightness])]);
+		v.filter->set_q(cc_offset(p.vcf_reso, chan.control[resonance]));
+
+		// apply the filter.  this has to happen even while the voice
+		// is inaudible, otherwise its state is stale by the time the
+		// level comes back up, and it clicks
+		v.filter->apply(mono, n);
 
 		// don't bother accumulating silent channels
 		if (!dca) continue;
@@ -262,7 +173,7 @@ uint32_t __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 
 void SynthEngine::note_on(uint8_t chan, uint8_t note, uint8_t vel)
 {
-	auto* vp = allocate();
+	auto* vp = pool.allocate();
 	if (vp) {
 		auto& v = *vp;
 		v.channel = &channel[chan];
@@ -274,8 +185,7 @@ void SynthEngine::note_on(uint8_t chan, uint8_t note, uint8_t vel)
 void SynthEngine::note_off(uint8_t chan, uint8_t note, uint8_t vel)
 {
 	Channel* c = &channel[chan];
-	for (auto& v: voice) {
-		if (v.free) continue;
+	for (auto& v: pool) {
 		if (v.channel == c && v.note == note) {
 			v.note_off();
 		}

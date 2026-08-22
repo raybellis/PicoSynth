@@ -7,13 +7,19 @@ set(PROJECT PicoSynth)
 #
 #----------------------------------------------------------------------
 
+# target device.  a build directory bakes these into its cache and
+# can't be moved between them, so switching target means configuring
+# a new one rather than re-running cmake over the old
+set(CONFIG_PICO_PLATFORM rp2350)
+set(CONFIG_PICO_BOARD    pico2)
+
 # audio parameters
 set(CONFIG_SAMPLE_RATE 44100)
 set(CONFIG_WAVE_SHIFT  11)
 set(CONFIG_BUFFER_SIZE 256)
 
 # set to 1 to enable LCD debug output
-set(CONFIG_LCD_ACTIVE 0)
+set(CONFIG_LCD_ACTIVE 1)
 
 # select I2S audio option
 set(CONFIG_HW_PIMORONI_AUDIO 1)
@@ -34,12 +40,22 @@ endif()
 
 #----------------------------------------------------------------------
 
-# import required SDKs
+# import required SDKs.  the platform has to be settled before the SDK
+# is imported, since that is what picks the compiler flags
+
+set(PICO_PLATFORM ${CONFIG_PICO_PLATFORM})
+set(PICO_BOARD ${CONFIG_PICO_BOARD})
+
 include($ENV{PICO_SDK_PATH}/external/pico_sdk_import.cmake)
 include($ENV{PICO_EXTRAS_PATH}/external/pico_extras_import.cmake)
 if (${CONFIG_LCD_ACTIVE})
 	include($ENV{PICO_HOME}/pimoroni-pico/pimoroni_pico_import.cmake)
 endif()
+
+# write a compile_commands.json out into the build tree.  an editor
+# has no other way to find either the SDK's headers or the generated
+# ones, since neither is anywhere near the source
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # set up project and SDK
 project(${PROJECT} C CXX ASM)
@@ -48,16 +64,31 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
 pico_sdk_init()
 
-message("-- Building data files")
+# the lookup tables are generated into the build tree rather than the
+# source tree, so that separate build directories (RP2040 vs RP2350,
+# say) each get their own copy instead of fighting over one.
+#
+# these run at build time, so editing a generator is enough to have
+# make rebuild the tables - the CONFIG_* values above are baked into
+# the command line, hence the dependency on this file as well
 
-execute_process(
-	COMMAND ./utils/data.js ${CONFIG_SAMPLE_RATE} ${CONFIG_WAVE_SHIFT} ${CONFIG_BUFFER_SIZE}
-	WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+set(GENERATED ${CMAKE_CURRENT_BINARY_DIR}/generated/tables)
+
+add_custom_command(
+	OUTPUT	${GENERATED}/data.c ${GENERATED}/data.h ${GENERATED}/settings.h
+	COMMAND	${CMAKE_CURRENT_LIST_DIR}/utils/data.js ${GENERATED}
+			${CONFIG_SAMPLE_RATE} ${CONFIG_WAVE_SHIFT} ${CONFIG_BUFFER_SIZE}
+	DEPENDS	${CMAKE_CURRENT_LIST_DIR}/utils/data.js ${CMAKE_CURRENT_LIST_FILE}
+	COMMENT	"Building data files"
+	VERBATIM
 )
 
-execute_process(
-	COMMAND ./utils/waves.js
-	WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+add_custom_command(
+	OUTPUT	${GENERATED}/waves.c
+	COMMAND	${CMAKE_CURRENT_LIST_DIR}/utils/waves.js ${GENERATED}
+	DEPENDS	${CMAKE_CURRENT_LIST_DIR}/utils/waves.js
+	COMMENT	"Building wave tables"
+	VERBATIM
 )
 
 add_executable(${PROJECT}
@@ -65,11 +96,18 @@ add_executable(${PROJECT}
 	src/usb_descriptors.c
 	src/audio.c
 	src/engine.cxx
+	src/voice.cxx
 	src/channel.cxx
 	src/envelope.cxx
+	src/filter.cxx
 	src/presets.c
-	src/data.c
-	src/waves.c
+
+	# listing the generated headers here too, not just the .c files,
+	# is what orders generation ahead of every compile in the target
+	${GENERATED}/data.c
+	${GENERATED}/data.h
+	${GENERATED}/settings.h
+	${GENERATED}/waves.c
 )
 
 pico_enable_stdio_usb(${PROJECT} 0)
@@ -84,6 +122,7 @@ endif()
 
 target_include_directories(${PROJECT} PRIVATE ${CMAKE_CURRENT_LIST_DIR})
 target_include_directories(${PROJECT} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_include_directories(${PROJECT} PRIVATE ${GENERATED})
 
 target_compile_options(${PROJECT} PRIVATE -Wall -Werror -O3)
 

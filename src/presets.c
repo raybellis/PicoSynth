@@ -2,7 +2,7 @@
 
 Patch presets[] = {
 	{	// 0
-		.dco_wave		= 0,
+		.dco_wave		= 2,
 
 		.dca_env_level	= 127,
 		.dca_env_a		= 30,
@@ -10,11 +10,14 @@ Patch presets[] = {
 		.dca_env_s		= 80,
 		.dca_env_r		= 20,
 
+		.vcf_freq		= 64,
+		.vcf_reso		= 64,
+
 		.lfo_freq		= 64,
 		.lfo_depth		= 20,
 	},
 	{	// 1
-		.dco_wave		= 1,
+		.dco_wave		= 3,
 
 		.dca_env_level	= 100,
 		.dca_env_a		= 30,
@@ -28,6 +31,9 @@ Patch presets[] = {
 		.dco_env_s		= 0,
 		.dco_env_r		= 0,
 
+		.vcf_freq		= 64,
+		.vcf_reso		= 64,
+
 		.lfo_freq		= 92,
 		.lfo_depth		= 20,
 	},
@@ -40,6 +46,9 @@ Patch presets[] = {
 		.dca_env_s		= 80,
 		.dca_env_r		= 20,
 
+		.vcf_freq		= 64,
+		.vcf_reso		= 64,
+
 		.lfo_freq		= 64,
 		.lfo_depth		= 127,
 	},
@@ -51,6 +60,9 @@ Patch presets[] = {
 		.dca_env_d		= 20,
 		.dca_env_s		= 80,
 		.dca_env_r		= 20,
+
+		.vcf_freq		= 64,
+		.vcf_reso		= 64,
 
 		.lfo_wave		= 1,
 		.lfo_freq		= 96,
