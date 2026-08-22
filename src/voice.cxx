@@ -40,7 +40,7 @@ void __not_in_flash_func(Voice::update)(int16_t* samples, size_t n)
 	}
 
 	// update voice state
-	dco_pos = interp0->accum[0] & (wave_max - 1);
+	dco_pos = interp0->accum[0] & (WAVE_MAX - 1);
 }
 
 void Voice::note_on(uint8_t _chan, uint8_t _note, uint8_t _vel)

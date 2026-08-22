@@ -64,32 +64,11 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
 pico_sdk_init()
 
-# the lookup tables are generated into the build tree rather than the
-# source tree, so that separate build directories (RP2040 vs RP2350,
-# say) each get their own copy instead of fighting over one.
-#
-# these run at build time, so editing a generator is enough to have
-# make rebuild the tables - the CONFIG_* values above are baked into
-# the command line, hence the dependency on this file as well
+# version.h is the only generated file left; the lookup tables are now
+# computed at startup by src/tables.c and src/waves.c, which is what
+# retired the NodeJS build dependency
 
 set(GENERATED ${CMAKE_CURRENT_BINARY_DIR}/generated/tables)
-
-add_custom_command(
-	OUTPUT	${GENERATED}/data.c ${GENERATED}/data.h ${GENERATED}/settings.h
-	COMMAND	${CMAKE_CURRENT_LIST_DIR}/utils/data.js ${GENERATED}
-			${CONFIG_SAMPLE_RATE} ${CONFIG_WAVE_SHIFT} ${CONFIG_BUFFER_SIZE}
-	DEPENDS	${CMAKE_CURRENT_LIST_DIR}/utils/data.js ${CMAKE_CURRENT_LIST_FILE}
-	COMMENT	"Building data files"
-	VERBATIM
-)
-
-add_custom_command(
-	OUTPUT	${GENERATED}/waves.c
-	COMMAND	${CMAKE_CURRENT_LIST_DIR}/utils/waves.js ${GENERATED}
-	DEPENDS	${CMAKE_CURRENT_LIST_DIR}/utils/waves.js
-	COMMENT	"Building wave tables"
-	VERBATIM
-)
 
 # the git revision, regenerated on every build rather than at configure
 # time - it exists to say what is on the board, so it has to track
@@ -115,13 +94,8 @@ add_executable(${PROJECT}
 	src/envelope.cxx
 	src/filter.cxx
 	src/presets.c
-
-	# listing the generated headers here too, not just the .c files,
-	# is what orders generation ahead of every compile in the target
-	${GENERATED}/data.c
-	${GENERATED}/data.h
-	${GENERATED}/settings.h
-	${GENERATED}/waves.c
+	src/tables.c
+	src/waves.c
 )
 
 add_dependencies(${PROJECT} version)
@@ -147,6 +121,9 @@ target_compile_definitions(${PROJECT} PRIVATE
 	PICO_AUDIO_I2S_MONO_OUTPUT=0
 	PICO_AUDIO_I2S_DATA_PIN=${CONFIG_I2S_DATA_PIN}
 	PICO_AUDIO_I2S_CLOCK_PIN_BASE=${CONFIG_I2S_CLOCK_PIN_BASE}
+	CONFIG_SAMPLE_RATE=${CONFIG_SAMPLE_RATE}
+	CONFIG_BUFFER_SIZE=${CONFIG_BUFFER_SIZE}
+	CONFIG_WAVE_SHIFT=${CONFIG_WAVE_SHIFT}
 	CONFIG_LCD_ACTIVE=${CONFIG_LCD_ACTIVE}
 	CONFIG_HW_PICOADK=${CONFIG_HW_PICOADK}
 	CONFIG_HW_PIMORONI_AUDIO=${CONFIG_HW_PIMORONI_AUDIO}

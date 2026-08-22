@@ -23,8 +23,11 @@
 
 #include "bench.h"
 #include "audio.h"
+#include "data.h"
+#include "waves.h"
 #include "engine.h"
 #include "version.h"
+
 
 SynthEngine engine;
 static audio_buffer_pool *ap = nullptr;
@@ -390,6 +393,11 @@ void benchmark_task()
 int main() {
 
 	stdio_init_all();
+
+	// the lookup tables are computed rather than baked in, so this
+	// has to happen before anything reads one
+	tables_init();
+	waves_init();
 
 	// so the build is identifiable over the UART too, not only on a
 	// display that may not be fitted

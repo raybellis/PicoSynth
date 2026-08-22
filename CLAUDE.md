@@ -10,7 +10,8 @@ GPLv3. There is no test suite — verification is by flashing hardware and liste
 
 ## Build
 
-Requires the Pico SDK toolchain plus NodeJS (used at build time to generate lookup tables).
+Requires only the Pico SDK toolchain. NodeJS used to be needed to generate the lookup tables at
+build time; they are computed at startup now.
 Three external repos are expected under `${PICO_HOME}` (default `/opt/pico`):
 
 ```
@@ -22,7 +23,7 @@ setenv PICO_EXTRAS_PATH "${PICO_HOME}/pico-extras"
 
 ```
 cmake -B build -DCMAKE_BUILD_TYPE=Release   # once
-make -C build -j8                           # picks up CONFIG_* and generator edits by itself
+make -C build -j8                           # picks up CONFIG_* edits by itself
 ```
 
 Artifacts land in `build/` (`PicoSynth.uf2` to flash, plus `.elf`/`.dis`/`.elf.map` for inspecting
@@ -55,40 +56,51 @@ UART1 (pins 4/5). Note that stdio is blocking: a `printf` from core 1 inside `au
 the buffer deadline and produce audible glitches. Instrument core 1 by pushing to `bench_queue` and
 printing from core 0 instead.
 
-## Generated sources — do not edit
+## Lookup tables — computed at startup
 
-Nothing generated lives in `src/`. Everything below is written into `build/generated/tables/` by
-`add_custom_command` rules at **build time**, so `make` alone is enough after editing a generator:
+Every table is built at boot rather than baked into the image, by `tables_init()` in `src/tables.c`
+and `waves_init()` in `src/waves.c`, both called from `main` before anything reads one. They live in
+`.bss`, so they cost RAM and nothing in flash.
 
-- `utils/data.js <outdir> <sample_rate> <wave_shift> <buffer_size>` → `data.c` (`note_table`,
-  `pan_table`, `power_table`, `svf_table`, `q_table`, `scale_table`, `cutoff_table`), `data.h`
-  (declarations for all seven), and `settings.h` (`SAMPLE_RATE`, `BUFFER_SIZE`, `WAVE_SHIFT`,
-  `WAVE_LEN`, `WAVE_MAX`, `SVF_LEN`, `SVF_STEPS`, `SVF_Q_LEN`, `SVF_Q_MAX`)
-- `utils/waves.js <outdir>` → `waves.c` (2048-sample × 16-bit sine/square/saw/triangle tables and
-  the `waves[]` index, declared by the hand-written `src/waves.h`)
+This replaced a pair of NodeJS generators that emitted C at build time. Moving the formulas into C
+costs about **22 ms at boot** and 2 KB of code, and buys 28 KB of flash — but the reason to do it
+was to retire the NodeJS dependency and the `add_custom_command` machinery that went with it. Two
+build subtleties this document used to insist on preserving (the rules' `DEPENDS` on
+`CMakeLists.txt`, and listing generated headers as target sources to order generation) simply no
+longer exist.
 
-**Never hand-write an `extern` for a generated table — include `data.h`.** Those declarations used
-to be scattered through the consumers, and nothing checked them against the definitions: `filter.cxx`
-once declared `extern uint16_t* svf_table;` against an `int16_t[]`, which linked silently and
-dereferenced the table's first four bytes as an address. `data.c` includes `data.h` itself, so both
-a bad definition and a bad consumer declaration are now compile errors.
+`version.h` is the one thing still generated — see `utils/version.cmake`. `build/generated/` also
+holds the SDK's own `pico_base`, written at configure time, so `make` cannot recreate it: delete
+`build/generated/tables`, never the parent.
 
-Two build-system details worth preserving if you touch `CMakeLists.txt`:
+**The tables are deliberately not `const`.** A `const` table goes to `.rodata`, which is in flash
+and cannot be written, so it could not be computed at runtime at all. That is the whole mechanism —
+no attributes, no linker script.
 
-- the rules `DEPENDS` on `CMakeLists.txt` as well as the generator, because the `CONFIG_*` values
-  are baked into the command line where `make` can't see them from timestamps alone
-- the generated **headers** are listed as target sources next to the `.c` files; that is what orders
-  generation ahead of every compile instead of racing with it on a parallel build from clean
+**Never hand-write an `extern` for a table — include `data.h`.** Those declarations used to be
+scattered through the consumers, and nothing checked them against the definitions: `filter.cxx` once
+declared `extern uint16_t* svf_table;` against an `int16_t[]`, which linked silently and
+dereferenced the table's first four bytes as an address. `tables.c` includes `data.h` itself, so
+both a bad definition and a bad consumer declaration are compile errors.
 
-`build/generated/` also holds the SDK's own `pico_base` (written at configure time, so `make`
-cannot recreate it) — delete `build/generated/tables`, never the parent.
+What was lost is the generator's build-time validation, which used to refuse to emit a `q_table`
+outside the range the filter is stable over. The curve now pins its endpoints by construction, and
+`tables.c` carries `_Static_assert`s for the constants themselves, so the check is compile-time
+again — just of the inputs rather than the output.
+
+Accuracy against the generator it replaced, verified on the host: `pan`, `svf`, `q`, `cutoff`,
+`square`, `saw` and `tri` come out bit-identical. `power_table` and `scale_table` differ by 1 LSB on
+a handful of entries and `note_table` by 6 parts in 38 million — float against the generator's
+double, worth 0.05 cents at worst. `sine_table` differs at exactly one entry, index 1024, where
+float π is a hair above true π so `sinf` returns −8.7e-8 and `floorf` takes it to −1 instead of 0.
 
 ## Compile-time configuration
 
-All knobs live at the top of `CMakeLists.txt` and are pushed into the code as either generated
-macros (audio params) or `target_compile_definitions` (hardware selection):
+All knobs live at the top of `CMakeLists.txt` and reach the code as
+`target_compile_definitions`:
 
-- `CONFIG_SAMPLE_RATE` / `CONFIG_WAVE_SHIFT` / `CONFIG_BUFFER_SIZE` — feed the JS generators
+- `CONFIG_SAMPLE_RATE` / `CONFIG_WAVE_SHIFT` / `CONFIG_BUFFER_SIZE` — reach the code as compile
+  definitions, which `src/settings.h` derives `WAVE_LEN`, `WAVE_MAX` and the table sizes from
 - `CONFIG_LCD_ACTIVE` — pulls in the Pimoroni Pico Display 2 stack for the benchmark readout
 - `CONFIG_HW_PIMORONI_AUDIO` / `CONFIG_HW_PICOADK` — select I2S pin assignments (and, for PicoADK,
   the GPIO 25 DAC soft-unmute in `audio.c`)
@@ -146,19 +158,37 @@ shifts the accumulator down by 6 into the `int16_t` I2S buffer.
 
 All three functions in that path — `SynthEngine::update`, `Voice::update`, `SVF::apply` — are marked
 `__not_in_flash_func` so the per-sample loops don't fetch instructions over XIP. Keep it that way
-when adding to it. The tables stay in flash deliberately: they are read once per buffer, not per
-sample. Note also that the filter runs *before* the `if (!dca) continue;` early-out — a filter that
-skips buffers comes back with state hundreds of samples stale, which is an audible click.
+when adding to it. Note also that the filter runs *before* the `if (!dca) continue;` early-out — a
+filter that skips buffers comes back with state hundreds of samples stale, which is an audible
+click.
 
-**Their total size is a performance parameter, not just a flash figure**, and that is easy to get
-wrong — I got it wrong. The reads are infrequent (four per voice per buffer: one `svf_table`, up to
-three `power_table`), which makes it tempting to conclude the tables cannot matter. What matters is
-not the read rate but whether the working set fits the XIP cache. Shrinking them from 66 KB to
-13.7 KB measured **25,000 cycles a buffer** at 64 voices — `bench_max` 3,400,000 ns → 3,300,000 —
-which works out at about 98 cycles per table read, the right order for a flash miss becoming a hit.
-Take the figure as indicative rather than exact: `bench_max` is a lifetime maximum from one run, and
-2.9% is within what a max statistic can wander. But the direction is real, so growing the tables
-back has a cost that the read counts alone will not predict.
+**Which tables live in RAM is set by `const`, and nothing else.** A `const` table goes to `.rodata`
+and is read in place from flash; drop the `const` and it goes to `.data`, which the runtime copies
+into RAM at boot — costing the RAM *and* the same again in flash for the initialiser. There is no
+attribute involved, and
+why `data.h` has to agree or the definition and declaration conflict. The wave tables have always
+been in RAM for exactly this reason, though for a long time it looked like an oversight rather than
+a decision.
+
+| in RAM | in flash |
+|---|---|
+| `sine`/`square`/`saw`/`tri_table`, read per *sample* | `note_table`, `pan_table` |
+| `power_table`, `svf_table`, the hot ones | `q_table`, `scale_table`, `cutoff_table` |
+
+**Whether table size costs time is unresolved, and the evidence is mixed.** Shrinking them from
+66 KB to 13.7 KB measured `bench_max` 3,400,000 ns → 3,300,000 at 64 voices, which looked like XIP
+cache misses turning into hits — about 98 cycles a read across the four reads a voice makes per
+buffer. But *then* moving the two hot tables into RAM, which should have eliminated any misses that
+remained, changed nothing measurable.
+
+Those two results are compatible if 13.7 KB already fits the cache comfortably, so the shrink
+removed the misses and the RAM move had none left to remove. They are equally compatible with the
+first 100,000 ns having been measurement wander — `bench_max` is a lifetime maximum from a single
+run, and 2.9% is well inside what a max statistic can drift. Distinguishing them needs repeated runs
+at each configuration, which has not been done. Do not quote the 98 cycles as a measured constant.
+
+What is safe to say: the reads are infrequent — four per voice per buffer — and no arrangement of
+these tables has yet been shown to cost more than about 3% of the audio budget.
 
 **Fixed-point conventions.** Phase is 16.16 within a `WAVE_MAX`-sized space (`WAVE_LEN << 16`);
 `note_table` entries are ready-made phase increments for the configured sample rate.
@@ -307,7 +337,7 @@ that gets tuned, and it was tuned by ear:
 | `q_table` | Q = 1.28, ≈2 dB emphasis | `svf_q_mid` | Q = 1..16, power-bent |
 | `cutoff_table` | MIDI note 90, 1480 Hz | `svf_note_mid` | note 0..118, power-bent |
 
-Both are one constant each in `data.js`. Neither is a plain sweep, because a plain sweep cannot
+Both are one constant each in `src/settings.h`. Neither is a plain sweep, because a plain sweep cannot
 have both a sane midpoint and a wide range — the two constraints fight and the midpoint wins, so
 each curve is raised to a power that pins its endpoints while placing the middle.
 

@@ -91,7 +91,7 @@ uint32_t __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 	// set up the interpolator
 	interp_config cfg = interp_default_config();
 	interp_config_set_shift(&cfg, 15);
-	interp_config_set_mask(&cfg, 1, wave_shift);
+	interp_config_set_mask(&cfg, 1, WAVE_SHIFT);
 	interp_config_set_add_raw(&cfg, true);
 	interp_set_config(interp0, 0, &cfg);
 
