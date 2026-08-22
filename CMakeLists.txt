@@ -91,6 +91,20 @@ add_custom_command(
 	VERBATIM
 )
 
+# the git revision, regenerated on every build rather than at configure
+# time - it exists to say what is on the board, so it has to track
+# commits.  the script only rewrites version.h when the revision
+# actually changes, so this does not force a relink each time
+add_custom_target(version ALL
+	COMMAND	${CMAKE_COMMAND}
+			-D SRC=${CMAKE_CURRENT_LIST_DIR}
+			-D OUT=${GENERATED}/version.h
+			-P ${CMAKE_CURRENT_LIST_DIR}/utils/version.cmake
+	BYPRODUCTS ${GENERATED}/version.h
+	COMMENT	"Checking git revision"
+	VERBATIM
+)
+
 add_executable(${PROJECT}
 	src/main.cxx
 	src/usb_descriptors.c
@@ -109,6 +123,8 @@ add_executable(${PROJECT}
 	${GENERATED}/settings.h
 	${GENERATED}/waves.c
 )
+
+add_dependencies(${PROJECT} version)
 
 pico_enable_stdio_usb(${PROJECT} 0)
 pico_enable_stdio_uart(${PROJECT} 1)

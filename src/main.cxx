@@ -24,6 +24,7 @@
 #include "bench.h"
 #include "audio.h"
 #include "engine.h"
+#include "version.h"
 
 SynthEngine engine;
 static audio_buffer_pool *ap = nullptr;
@@ -371,6 +372,13 @@ void benchmark_task()
 	graphics->text(std::to_string(bench_max), Point(4, 20), 120);
 	graphics->text(std::to_string(voices) + "/" + std::to_string(voices_max),
 		Point(4, 36), 120);
+
+	// which build this is.  dimmer than the live figures, since it
+	// never changes - a trailing + means the tree had uncommitted
+	// changes when it was built, so the revision alone does not
+	// identify what is running
+	graphics->set_pen(128, 128, 128);
+	graphics->text(GIT_VERSION, Point(4, 52), 120);
 	lcd->update(graphics);
 #endif
 }
@@ -382,6 +390,10 @@ void benchmark_task()
 int main() {
 
 	stdio_init_all();
+
+	// so the build is identifiable over the UART too, not only on a
+	// display that may not be fitted
+	printf("PicoSynth %s\n", GIT_VERSION);
 
 	// these float at reset, so drive them off before anything else -
 	// and before the one case below that wants to light one
