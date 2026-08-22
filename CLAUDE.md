@@ -193,6 +193,13 @@ forever; and the `4 *` assumes the 250 MHz overclock actually took, which
 `set_sys_clock_khz(250000, false)` does not guarantee — at 150 MHz a cycle is 6.67 ns and the
 figure under-reports by 1.67×.
 
+That last one is now checked rather than assumed: `main` tests the return and lights the Display
+Pack's **red LED** if the clock could not be set, so the bench figures are only to be trusted while
+it is dark. That LED is GPIO 6/7/8 (`RGB_R`/`RGB_G`/`RGB_B`), wired common anode — low lights it,
+high turns it off — and `rgb_init()` drives all three off at startup because they float at reset.
+Plain GPIO rather than Pimoroni's `RGBLED`, which would claim PWM slices for an indicator. Note
+these are GPIO numbers, not header pin numbers; the pins carrying the I2S signals are 9/10/11.
+
 All three survive the move to RP2350: the interpolators exist on both, and `hardware_divider` is
 real silicon on RP2040 but a software emulation (`divider.c`, selected by the `else()` in its
 `CMakeLists.txt`) on RP2350, with the same API — so nothing had to change. The one place the two
