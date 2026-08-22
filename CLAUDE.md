@@ -301,4 +301,11 @@ scale, the state peaks at 178575 — 2^17.4, or 12000× inside `int32_t` — and
 drift, with silence settling to exactly zero and DC settling to the filter's DC gain. A clamp cost
 19 instructions a sample and could only ever fire if one of those three premises broke.
 
-`README.md` advertises 128 voices; `VoicePool::nv` is presently 32. Trust the code.
+`README.md` advertises 128 voices; `VoicePool::nv` is presently 64. Trust the code.
+
+Raising `nv` costs almost nothing in RAM — 44 bytes of `.bss` per voice, plus about 90 bytes of heap
+per *sounding* voice for its two envelopes and filter — so the limit is CPU, not memory. Every voice
+the pool holds costs a full render and filter pass per buffer, at roughly 65 instructions a sample,
+so 64 voices all sounding is on the order of 180M instructions a second against 250 MHz. Read the
+LCD before trusting a larger number: the third line gives the peak voice count and the second gives
+the worst time it was measured under, against a deadline of 5,805,000 ns.

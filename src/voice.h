@@ -56,7 +56,7 @@ public:
 class VoicePool {
 
 private:
-	static const uint8_t	nv = 32;
+	static const uint8_t	nv = 64;
 	Voice					voice[nv];
 
 private:
