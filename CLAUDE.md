@@ -36,6 +36,14 @@ because that is what settles the compiler flags. A build directory bakes the pla
 cache and cannot be retargeted in place, so changing those means deleting `build/` and configuring
 it again — `make` alone will not notice, and neither will `cmake -B build` over the old tree.
 
+**Those knobs no longer reach back to RP2040, and setting them to it will not build.** The audio
+path now depends on things ARMv6-M does not have: the FPU and `vcvtr` in `SVF::apply`, `vmrs`/`vmsr`
+to set flush-to-zero, `ssat` for the output clamp, and `umull` in `frequency_modulate` — where the
+old hand-rolled 16-bit decomposition was not merely slower but *wrong*, overflowing on any upward
+modulation. Going back would mean reinstating a fixed-point filter, and the measurements below say
+that costs about 22 points of the audio deadline at 64 voices. The knobs are kept because the SDK
+wants them, not because RP2040 is still a supported target.
+
 ## Flashing and printf debugging
 
 The SDK fetches picotool into the tree at `build/_deps/picotool/picotool` (it is not on `PATH`);
@@ -150,26 +158,37 @@ skips buffers comes back with state hundreds of samples stale, which is an audib
 The inline `// N bits` comments in `SynthEngine::update` track accumulator width; preserve and
 update them when changing any scaling step, since overflow here is silent and audible.
 
-> **On this branch the filter is single-precision float, not fixed point.** `SVF::apply` keeps its
-> state in `float` and converts the integer coefficient tables once per buffer. Most of the
-> fixed-point discussion below therefore describes `main`, not this branch — it is left in place
-> because the branch exists to be A/B'd against `main`, and will either be rewritten or discarded.
+**The filter alone is single-precision float; everything else stays fixed point.** `SVF::apply`
+keeps `low` and `band` in `float`, and the boundary sits at its edges: it reads and writes the same
+`int16_t` buffer as before, so `Voice::update`, the DCA chain and the accumulator are untouched.
+That was measured, not assumed — see the note further down.
 
-The filter uses two different scales in the same expressions, which is easy to get wrong: the
-damping factor `q` is 1:15 (`fmul_su`), while the cutoff coefficient is 2:14 (`fmul_f`) because the
-Chamberlin SVF needs `f = 2·sin(π·Fc/Fs)` and 2.0 will not fit in 1:15. Both round to nearest rather
-than shifting — a plain `>>` floors, and inside an integrator that accumulates into audible DC.
-`svf_table` is clamped at `Fs/6`, the stability limit of this filter topology, which also caps every
-entry at 16384 and so keeps the table inside an `int16_t` at any sample rate.
+The coefficient tables stay integer and are converted **once per buffer**, in the preamble, where
+the compiler folds each into a single `vcvt` and keeps all three live in FP registers across the
+loop. Float tables would save those three instructions per buffer and cost twice the flash, so
+don't. Their fixed-point scales survive only as the divisors in that conversion: `q` and `scale`
+are 1:15, while the cutoff coefficient is 2:14, because the Chamberlin SVF needs
+`f = 2·sin(π·Fc/Fs)` and 2.0 will not fit in 1:15. `svf_table` is clamped at `Fs/6`, the stability
+limit of this topology, which also caps every entry at 16384 and so keeps the table inside an
+`int16_t` at any sample rate.
 
-`q` holds `1/Q`, not `Q`, so *small* values are the resonant ones — Q=2 is 16384, Q=64 is 512.
-`set_q` takes a 7-bit *index*, not a value, and reads the pair `q_table[n]` / `scale_table[n]`; that
-is what guarantees the damping stays where the filter is stable and `fmul_f(high, f)` cannot
-overflow, since no index escapes the table. `q_table` runs Q = 1..16 on a curve bent so its
-*midpoint* lands on `svf_q_mid` — see below for why the midpoint is the interesting part. The exact
-stability bound for this update order is
-`q1 < 2/f − f/2`, bottoming out at 1.5 where `f` reaches 1.0, comfortably above the table's ceiling
-of 1.0 (`SVF_Q_MAX`).
+`q` holds `1/Q`, not `Q`, so *small* values are the resonant ones. `set_q` takes a 7-bit *index*,
+not a value, and reads the pair `q_table[n]` / `scale_table[n]`; that is what guarantees the damping
+stays where the filter is stable, since no index escapes the table. `q_table` runs Q = 1..16 on a
+curve bent so its *midpoint* lands on `svf_q_mid` — see below for why the midpoint is the
+interesting part. The exact stability bound for this update order is `q1 < 2/f − f/2`, bottoming out
+at 1.5 where `f` reaches 1.0, comfortably above the table's ceiling of 1.0 (`SVF_Q_MAX`).
+
+Two things in `SVF::apply` are written as inline assembly on purpose. `clamp16` is `ssat`, one
+instruction against the four a compare-and-select costs. And the output conversion is `vcvtr`
+written longhand, because `lrintf()` **does not inline** — it has to set `errno`, so the compiler
+emits a call, and in this loop that is a call per sample. `vcvtr` also rounds to nearest where a C
+cast would truncate toward zero on every sample.
+
+The FPU is left in **flush-to-zero** mode on core 1 (`fpu_flush_to_zero` in `main.cxx`, FPSCR bit
+24). With silence at its input the filter's state reaches denormals within 20 ms, and denormals are
+slower than normal operands. The oscillator never actually goes quiet while a voice exists, so this
+is insurance rather than a fix for anything observed — but it costs one write at startup.
 
 `scale` is the separate input scaling, and it is the knob that decides where the response sits in
 absolute terms: the resonant peak is always a factor of Q above the passband, and all `scale` picks
@@ -233,10 +252,10 @@ safe to move back to RP2040 unchanged:
 - the DCA chain in `SynthEngine::update` carries all 43 bits instead of shifting twice partway
   through to stay in range, which recovers 11 bits and retires a multiply that finished within 1%
   of overflowing `uint32_t`.
-- three of the four multiplies in `SVF::apply`, which is what lets the integrators run at their
-  true width instead of being clamped to `int16_t` — see below.
+- `SVF::apply` no longer multiplies in fixed point at all — it is float, and depends on the FPU,
+  `vcvtr` and `ssat` besides. See below.
 
-## Current state (branch `filter`)
+## Current state (branch `filter-float`)
 
 Work in progress on a state-variable filter (`src/filter.{h,cxx}`, per-voice), now driven by the
 `vcf_freq` / `vcf_reso` fields of `Patch`, offset by CC 74 and CC 71, and both curves have now been
@@ -293,18 +312,35 @@ input gave 9 dB SNR at Q=8 and 6.9 dB at Q=64; letting the state run and clampin
 gives 86 dB and 81 dB. Below about Q=4, or at low input levels, the two are identical, so the old
 scheme looked fine right up until resonance was actually used.
 
-That is what the wide multiplies buy: `band` no longer fits the 32-bit products, so `fmul_su_wide`
-and `fmul_f_wide` take 64-bit intermediates. Only `fmul_su(input, scale)` stays narrow, because its
-operand really is an `int16_t`. Three `smlal` and one `mul.w`, 61 instructions against the old 52 —
-about 5% of a core at 32 voices, and it also retires the `fmul_f(high, f)` overflow that used to be
-documented here as a known defect.
+Letting the state run is also what forced the move to float. In fixed point it needed 64-bit
+intermediates on three of the four multiplies, because `band` no longer fitted a 32-bit product.
+Float carries the whole thing without that: the state peaks around 2^17.4, against 24 bits of
+mantissa and a range that reaches 3.4e38, so neither precision nor overflow is in question.
 
 There is deliberately **no** clamp on the state. Three things bound it: the input is an `int16_t`,
 every table entry keeps the filter stable, and a stable filter's state cannot exceed input × peak
 gain. Measured over 9 cutoffs × all 128 resonances × square/saw/sine/impulse/DC/noise at full
-scale, the state peaks at 178575 — 2^17.4, or 12000× inside `int32_t` — and a 60-second run shows no
-drift, with silence settling to exactly zero and DC settling to the filter's DC gain. A clamp cost
-19 instructions a sample and could only ever fire if one of those three premises broke.
+scale, the state peaks at 178575, and a 60-second run shows no drift.
+
+**Why float, and what it cost to find out.** The fixed-point version ran 34 instructions a sample;
+float runs 15. But instruction count is the wrong unit here — `vfma` has roughly three cycles of
+latency against one of throughput, and the SVF is a strict serial recurrence, `low` → `high` →
+`band` → the next `low`. So it had to be measured on hardware, at 64 voices, on `bench_max`:
+
+| | bench_max | of deadline | cycles/voice-sample | instr | CPI |
+|---|---|---|---|---|---|
+| fixed point | 4,700,000 ns | 81.0% | 71.7 | 51 | 1.41 |
+| float | 3,400,000 ns | 58.6% | 51.9 | 32 | 1.62 |
+
+The latency worry was real — CPI got *worse*, 1.41 → 1.62 — but the instruction count fell far
+enough to win by 27.7% anyway. Note also what that table says about everything outside the sample
+loops: at 1.6 CPI those account for ~13,100 of the 13,281 cycles per voice-buffer, so the DCA chain,
+the envelope virtuals and the `set_cutoff`/`set_q` veneers into flash come to about 1% between them.
+Optimising any of those is not worth the trouble; the sample loops are the only thing that matters.
+
+Numerically float is also a clear improvement: against a double-precision reference with the same
+output clip, SNR went from 89–92 dB to 114–126 dB, bit-exact at low levels, and IEEE rounding makes
+the round-to-nearest care that the fixed-point integrators needed automatic.
 
 `README.md` advertises 128 voices; `VoicePool::nv` is presently 64. Trust the code.
 
