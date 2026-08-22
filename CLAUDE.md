@@ -200,6 +200,11 @@ high turns it off — and `rgb_init()` drives all three off at startup because t
 Plain GPIO rather than Pimoroni's `RGBLED`, which would claim PWM slices for an indicator. Note
 these are GPIO numbers, not header pin numbers; the pins carrying the I2S signals are 9/10/11.
 
+**The overclock is confirmed working on RP2350** — the LED stays dark on a Pico 2 at
+`VREG_VOLTAGE_1_30`, so the part really is at 250 MHz and the full CPU budget is available. Worth
+recording because the datasheet only rates RP2350 to 150 MHz, and because a silent fallback was one
+of the early suspects when the port would not boot. It wasn't that.
+
 All three survive the move to RP2350: the interpolators exist on both, and `hardware_divider` is
 real silicon on RP2040 but a software emulation (`divider.c`, selected by the `else()` in its
 `CMakeLists.txt`) on RP2350, with the same API — so nothing had to change. The one place the two
