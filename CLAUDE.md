@@ -159,8 +159,9 @@ entry at 16384 and so keeps the table inside an `int16_t` at any sample rate.
 `q` holds `1/Q`, not `Q`, so *small* values are the resonant ones — Q=2 is 16384, Q=64 is 512.
 `set_q` takes a 7-bit *index*, not a value, and reads the pair `q_table[n]` / `scale_table[n]`; that
 is what guarantees the damping stays where the filter is stable and `fmul_f(high, f)` cannot
-overflow, since no index escapes the table. `q_table` is geometric over Q = 1..64, so each step is a
-constant increment in dB of emphasis. The exact stability bound for this update order is
+overflow, since no index escapes the table. `q_table` runs Q = 1..64 on a curve bent so its
+*midpoint* lands on `svf_q_mid` — see below for why the midpoint is the interesting part. The exact
+stability bound for this update order is
 `q1 < 2/f − f/2`, bottoming out at 1.5 where `f` reaches 1.0, comfortably above the table's ceiling
 of 1.0 (`SVF_Q_MAX`).
 
@@ -234,9 +235,20 @@ around a centre of 64 rather than replacing it (`cc_offset` in `engine.cxx`), wh
 `Channel()` has to centre them at construction — left at zero they would close every filter to MIDI
 note 0. One consequence is that a parameter's full range is only reachable when the patch's own
 value is 64, which is why both `vcf_freq` and `vcf_reso` are 64 in every preset — at `vcf_reso` =
-21 a full CC 71 would only reach Q ≈ 16. That ties the presets' default resonance to the middle of
-`q_table`, which is Q ≈ 8 because the table is geometric; if a milder default is wanted without
-giving up the range, it is the table's curve that needs changing, not the preset.
+21 a full CC 71 would only reach Q ≈ 16.
+
+That has a consequence worth understanding before touching `q_table`: **the middle of the table is
+what every patch sounds like** before anyone moves a controller. A plain geometric sweep from Q=1
+to Q=64 is the natural choice — constant dB per step, the right feel for a resonance control — but
+it puts that middle at Q ≈ 8, which is 18 dB of peak over passband and far too emphatic as a
+default. So the curve is raised to a power that pins both endpoints while moving the midpoint onto
+`svf_q_mid` (2.0, i.e. 6 dB). Change that one constant in `data.js` to retune it.
+
+The cost is an uneven control: the bend that mildens the middle also flattens the bottom. At
+`svf_q_mid` = 2.0 everything below CC 53 sits under Q = 1.5, which is inaudible, so the lower 40%
+of CC 71 does nothing. That trades directly against the default — 1.5 gives 3.5 dB but kills half
+the control, 3.0 gives 9.5 dB and only wastes below CC 39. Lowering `svf_q_max` from 64 is the
+other lever, at the cost of the top of the range.
 
 Unlike the rest of the per-voice parameters, the filter is configured in `SynthEngine::update`
 rather than latched in `Voice::note_on`, so that moving a controller affects notes already

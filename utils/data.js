@@ -91,11 +91,36 @@ const svf_q_max = 32768;			// Q = 1
 const svf_q_min = 512;				// Q = 64
 const svf_q_len = 128;				// one entry per 7-bit patch value
 
-// geometric, so that each step is a constant increment in the dB of
-// resonant emphasis (36 dB across the range, about 0.28 dB a step)
-const q_values = Array(svf_q_len).fill(0).map((e, i) =>
-	Math.round(svf_q_max * Math.pow(svf_q_min / svf_q_max, i / (svf_q_len - 1)))
-);
+// the sound controllers offset the patch around centre, so a preset
+// that wants CC 71 to reach both ends has to sit at the middle of this
+// table - and the middle is therefore what every patch sounds like
+// before anyone touches a controller.
+//
+// a plain geometric sweep between the endpoints is even in dB, which
+// is the right feel for a resonance control, but it puts that middle
+// at Q = 8, or 18 dB of emphasis over the passband.  far too much for
+// a default.  raising the curve to a power moves the midpoint onto
+// svf_q_mid while pinning both ends, so the presets can stay at 64 and
+// keep their full range.
+//
+// the cost is an uneven knob: gentle over the lower half, steep over
+// the top quarter.  lowering svf_q_max is the other lever if that
+// matters more than reaching Q = 64.
+const svf_q_mid = 2.0;					// Q at the middle of the table
+
+// index 64 is where a preset of 64 with the controller centred lands,
+// which is 64/127 of the way along and not quite one half
+const svf_q_u_mid = 64 / (svf_q_len - 1);
+
+const svf_q_exp =
+	Math.log(Math.log(svf_q_mid) / Math.log(svf_q_max / svf_q_min)) /
+	Math.log(svf_q_u_mid);
+
+const q_values = Array(svf_q_len).fill(0).map((e, i) => {
+	const u = i / (svf_q_len - 1);
+	return Math.round(svf_q_max *
+		Math.pow(svf_q_min / svf_q_max, Math.pow(u, svf_q_exp)));
+});
 
 // nothing in the table may exceed 1.0, both because the filter would
 // have gain at DC above that and because set_q no longer range checks
