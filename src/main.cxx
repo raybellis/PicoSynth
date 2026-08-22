@@ -273,8 +273,24 @@ void audio_task(void)
 	give_audio_buffer(ap, buffer);
 }
 
+// FPSCR is per core, and the filter runs entirely on this one.
+// flush-to-zero costs nothing to set and takes denormals off the
+// table: they are slower than normal operands on this FPU, and the
+// filter's state is what would reach them.  in practice the
+// oscillator feeding it never goes silent while a voice exists, so
+// this is insurance rather than a fix for anything observed
+static void fpu_flush_to_zero(void)
+{
+	uint32_t fpscr;
+
+	__asm volatile ("vmrs %0, fpscr" : "=r" (fpscr));
+	fpscr |= (1u << 24);				// FZ
+	__asm volatile ("vmsr fpscr, %0" :: "r" (fpscr));
+}
+
 void audio_loop(void)
 {
+	fpu_flush_to_zero();
 	bench_init();
 
 	while (true) {

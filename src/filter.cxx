@@ -29,7 +29,7 @@ void Filter::set_q(uint16_t n)
 }
 
 SVF::SVF() :
-	low(0), band(0)
+	low(0.0f), band(0.0f)
 {
 }
 
@@ -37,84 +37,81 @@ SVF::~SVF()
 {
 }
 
-// an arithmetic shift rounds towards -infinity, which inside the
-// integrators below accumulates into a DC offset, so all of these
-// round to nearest instead
-
-// multiply by the 1:15 fixed point damping factor.  only used on the
-// input, which is an int16_t, so a 32-bit product cannot overflow
-static inline int32_t fmul_su(int32_t a, int32_t s)
-{
-	return ((a * s) + (1 << 14)) >> 15;
-}
-
-// the same, for the damping term, whose operand is the band state and
-// so runs to STATE_MAX rather than to int16_t
-static inline int32_t fmul_su_wide(int32_t a, int32_t s)
-{
-	return (int32_t)((((int64_t)a * s) + (1 << 14)) >> 15);
-}
-
-// multiply by the 2:14 fixed point cutoff coefficient, which has to
-// carry a factor of two and therefore can't use the same scale.  both
-// of its operands - the band state and the high term - are wider than
-// 16 bits, so this one is always the 64-bit form
-static inline int32_t fmul_f_wide(int32_t a, int32_t f)
-{
-	return (int32_t)((((int64_t)a * f) + (1 << 13)) >> 14);
-}
-
 // saturate to full scale instead of wrapping, so that an overdriven
-// filter distorts at the rails rather than inverting the signal
+// filter distorts at the rails rather than inverting the signal.
+// ARMv8-M does this in one instruction; the compare-and-select the
+// compiler generates from the obvious C costs four
 static inline int32_t clamp16(int32_t x)
 {
-	if (x > INT16_MAX) return INT16_MAX;
-	if (x < INT16_MIN) return INT16_MIN;
-	return x;
+	int32_t r;
+	__asm volatile ("ssat %0, #16, %1" : "=r" (r) : "r" (x));
+	return r;
 }
 
-// the integrators are deliberately not clamped at all.  three things
-// bound them between them: the input is an int16_t, the filter is
-// stable for every entry the tables can produce (f <= 1.0 from the
-// Fs/6 clamp on svf_table, q1 <= 1.0 from SVF_Q_MAX, against a limit
-// of q1 < 2/f - f/2), and a stable filter's state cannot exceed its
-// input times its peak gain, which is sqrt(Q) here.
+// round to nearest on the way out.  a C cast truncates towards zero,
+// biasing every sample; vcvtr honours the FPSCR rounding mode, which
+// is round-to-nearest-even, and costs exactly the same two
+// instructions as the cast.
 //
-// measured across 9 cutoffs x all 128 resonances x square, saw, sine,
-// impulse, DC and noise at full scale, the state peaks at 353512 -
-// 2^18.4, or 6000x inside int32_t.  a clamp would only ever fire if
-// one of those three premises broke, and it is worth about a fifth of
-// this loop, so there isn't one.  re-run utils/../unclamped.js if the
-// tables or the input scaling ever change
+// written out because lrintf() does not inline - it has to set errno,
+// so the compiler emits a call, and in this loop that is a call per
+// sample
+static inline int32_t to_int(float x)
+{
+	int32_t r;
+	float t;
+
+	// t is early-clobbered so it gets a scratch register rather than
+	// aliasing x, which would otherwise cost a copy to preserve it
+	__asm volatile ("vcvtr.s32.f32 %1, %2\n\tvmov %0, %1"
+			: "=r" (r), "=&t" (t) : "t" (x));
+
+	return r;
+}
+
+// the integrators are deliberately not clamped.  the input is an
+// int16_t, the filter is stable for every entry the tables can produce
+// (f <= 1.0 from the Fs/6 clamp on svf_table, q1 <= 1.0 from
+// SVF_Q_MAX, against a limit of q1 < 2/f - f/2), and a stable filter's
+// state cannot exceed its input times its peak gain, which is sqrt(Q).
+// measured, the state peaks around 2^17.4 - nowhere near the range of
+// a float, let alone its precision, which is 24 bits of mantissa
+// against the 18 the state occupies
+//
+// only the output is clamped.  clamping the integrators saturates
+// inside the feedback loop, which is a nonlinearity rather than a
+// clip, and it wrecks the response at any useful resonance: against
+// the ideal filter with the same output clip, a full scale input at
+// Q=8 measured 9 dB SNR that way and 86 dB this way
 
 // runs from RAM - this is the per-sample inner loop of the audio
 // path, same as SynthEngine::update that calls it
 void __not_in_flash_func(SVF::apply)(int16_t* buf, size_t n)
 {
-	int32_t f = svf_table[cutoff];
-	int32_t high;
+	// the tables stay integer and are converted once here, not per
+	// sample: the compiler folds each into a single vcvt in the
+	// preamble and keeps all three in FP registers across the loop.
+	// float tables would save those three instructions per buffer and
+	// cost twice the flash
+	const float f  = svf_table[cutoff] * (1.0f / 16384.0f);	// 2:14
+	const float dq = q                 * (1.0f / 32768.0f);	// 1:15
+	const float sc = scale             * (1.0f / 32768.0f);	// 1:15
 
-	// q and scale are deliberately left as member reads.  buf is an
-	// int16_t* and they are uint16_t, so those two may alias and the
-	// compiler reloads both every iteration - but hoisting them into
-	// locals measured two instructions a sample *worse*, because on
-	// M0+ the extra live values land in high registers and every muls
-	// then needs a mov down to a low one
-	//
-	// note that only the output is clamped to int16_t.  clamping the
-	// integrators themselves saturates inside the feedback loop, which
-	// is a nonlinearity rather than a clip, and it wrecks the response
-	// at any useful resonance: measured against the ideal filter with
-	// the same output clip, a full scale input at Q=8 came out at 9 dB
-	// SNR that way against 86 dB this way
+	// held in registers across the loop rather than written back each
+	// sample - the members only exist to carry state between buffers
+	float lo = low, bd = band;
+
 	for (size_t i = 0; i < n; ++i) {
-		int32_t input = buf[i];
+		float input = buf[i];
 
-		low += fmul_f_wide(band, f);
-		high = fmul_su(input, scale) - fmul_su_wide(band, q) - low;
-		band += fmul_f_wide(high, f);
-		// notch = high + low;
+		lo += f * bd;
+		float hi = sc * input - dq * bd - lo;
+		bd += f * hi;
+		// notch = hi + lo;
 
-		buf[i] = clamp16(low);
+		buf[i] = clamp16(to_int(lo));
 	}
+
+	low = lo;
+	band = bd;
 }

@@ -27,7 +27,7 @@ public:
 class SVF : public Filter {
 
 private:
-	int32_t					low, band;
+	float					low, band;
 
 public:
 	virtual void			apply(int16_t* buf, size_t n);

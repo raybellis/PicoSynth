@@ -150,6 +150,11 @@ skips buffers comes back with state hundreds of samples stale, which is an audib
 The inline `// N bits` comments in `SynthEngine::update` track accumulator width; preserve and
 update them when changing any scaling step, since overflow here is silent and audible.
 
+> **On this branch the filter is single-precision float, not fixed point.** `SVF::apply` keeps its
+> state in `float` and converts the integer coefficient tables once per buffer. Most of the
+> fixed-point discussion below therefore describes `main`, not this branch — it is left in place
+> because the branch exists to be A/B'd against `main`, and will either be rewritten or discarded.
+
 The filter uses two different scales in the same expressions, which is easy to get wrong: the
 damping factor `q` is 1:15 (`fmul_su`), while the cutoff coefficient is 2:14 (`fmul_f`) because the
 Chamberlin SVF needs `f = 2·sin(π·Fc/Fs)` and 2.0 will not fit in 1:15. Both round to nearest rather
