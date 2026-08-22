@@ -182,7 +182,16 @@ high registers and every `muls` then needs a `mov` down to a low one.
 **Hardware used directly:** `interp0` in blend/wave-lookup mode is the wavetable oscillator
 (shift 15, mask `wave_shift`, raw add) — `Voice::update` loads the step/base/accum and pops samples;
 `hw_divider` for bend scaling; SysTick as a cycle counter via `bench.h` (`bench_delta` handles the
-24-bit wrap), reported as min/max microsecond-ish figures on the LCD.
+24-bit wrap).
+
+The two LCD figures are min/max **nanoseconds** — `bench_delta` counts `clk_sys` cycles and
+`audio_task` multiplies by 4, one cycle being 4 ns at 250 MHz. The deadline is 5,805,000, one
+256-sample buffer at 44.1 kHz. Three things to know before trusting the number: it spans only the
+`memset` and `SynthEngine::update`, not the output copy or the audio buffer calls; `bench_min` and
+`bench_max` are lifetime extremes that nothing resets, so a slow first buffer pegs the maximum
+forever; and the `4 *` assumes the 250 MHz overclock actually took, which
+`set_sys_clock_khz(250000, false)` does not guarantee — at 150 MHz a cycle is 6.67 ns and the
+figure under-reports by 1.67×.
 
 All three survive the move to RP2350: the interpolators exist on both, and `hardware_divider` is
 real silicon on RP2040 but a software emulation (`divider.c`, selected by the `else()` in its
