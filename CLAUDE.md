@@ -187,10 +187,18 @@ high registers and every `muls` then needs a `mov` down to a low one.
 All three survive the move to RP2350: the interpolators exist on both, and `hardware_divider` is
 real silicon on RP2040 but a software emulation (`divider.c`, selected by the `else()` in its
 `CMakeLists.txt`) on RP2350, with the same API — so nothing had to change. The one place the two
-parts genuinely differ is `frequency_modulate` in `engine.cxx`, which decomposes a 32×32 multiply
-into 16-bit halves because ARMv6-M has no `UMULL`. On the M33 that is now slower than just writing
-`(uint64_t)step * mul`, which compiles to a single `umull` — the hand-rolled version is still what
-is compiled, and is worth revisiting.
+parts genuinely differ is the multiplier: ARMv6-M has only `MULS`, 32×32→32, while the M33 has a
+single-cycle `UMULL`/`SMULL`. Three places now depend on the wide one, and none of them would be
+safe to move back to RP2040 unchanged:
+
+- `frequency_modulate` was a hand-rolled 16-bit decomposition, and it **overflowed** — `lsb * mul`
+  reaches 8589017100 against a `uint32_t` ceiling, costing exactly 65536 off the phase increment
+  whenever modulation went *upward*. One `umull` replaces it. See the commit for the measured
+  damage; it was thousands of cents on low notes.
+- the DCA chain in `SynthEngine::update` carries all 43 bits instead of shifting twice partway
+  through to stay in range, which recovers 11 bits and retires a multiply that finished within 1%
+  of overflowing `uint32_t`.
+- `fmul_f_wide` in `filter.cxx`, for the `high` term only — see below.
 
 ## Current state (branch `filter`)
 
@@ -218,11 +226,13 @@ the response curves, the Q range, the passband/peak split, the overflow margin �
 simulation against the generated tables rather than from measuring the board's output, so treat
 them as designed-for rather than measured-on-hardware values.
 
-`fmul_f(high, f)` can in principle overflow `int32_t` at high `q`, and `clamp16` would then saturate
-the wrapped value into a full-scale sign flip. The `SVF_Q_MAX` cap puts this out of reach — worst
-case across the whole of `q_table` at the worst-case cutoff is `|high|` = 91269 against a limit of
-131071 — but the margin is only 1.44×, so anything that widens the `q` range or the input scaling
-needs re-checking. A real fix means clamping `high` before the multiply or using a 64-bit
-intermediate, which is expensive on M0+.
+The `fmul_f(high, f)` overflow that used to be listed here as a known defect is gone. `high` is a
+sum of three terms and reaches six figures, where a 32-bit product would wrap and `clamp16` would
+saturate the wrapped value into a full-scale sign flip. It is now `fmul_f_wide`, which takes a
+64-bit intermediate — one `smlal` on the M33, measured at three extra instructions a sample, about
+1.7% of a core at 32 voices. The 32-bit form was not actually overflowing at the current bounds, so
+this is headroom rather than a live fix; the point of buying it is that `q_table` and `scale_table`
+can now be changed without re-deriving the margin each time. The other three multiplies in the loop
+stay 32-bit, because their operands are `clamp16`-bounded and cannot overflow.
 
 `README.md` advertises 128 voices; `VoicePool::nv` is presently 32. Trust the code.

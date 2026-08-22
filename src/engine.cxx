@@ -91,8 +91,14 @@ uint32_t __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 		// and a reference to the current note's patch
 		auto& p = *v.patch;
 
+		// the chain is 15 + 7 + 7 + 7 + 7 = 43 bits.  the 32-bit form
+		// had to shift twice partway through to stay in range, losing
+		// 11 bits, and still finished within 1% of overflowing
+		// uint32_t on the last multiply.  the M33 carries all 43 bits,
+		// so the final shift is the only rounding left
+
 		// get the 15-bit DCA current envelope level
-		uint32_t dca = v.dca_env->level();		// 15 bits
+		uint64_t dca = v.dca_env->level();		// 15 bits
 
 		// scale the DCA by the patch's 7-bit DCA master level
 		dca *= p.dca_env_level;					// 22 bits
@@ -101,13 +107,11 @@ uint32_t __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 		dca *= v.vel;							// 29 bits
 
 		// scale the DCA by the 7-bit channel volume
-		dca >>= 7;								// 22 bits
-		dca *= chan.control[volume];			// 29 bits
-		dca >>= 4;								// 25 bits
+		dca *= chan.control[volume];			// 36 bits
 
 		// apply 7-bit pan and scale back to 16 bits
-		uint16_t level_l = (dca * chan.pan_l) >> 16;
-		uint16_t level_r = (dca * chan.pan_r) >> 16;
+		uint16_t level_l = (dca * chan.pan_l) >> 27;	// 43 - 27
+		uint16_t level_r = (dca * chan.pan_r) >> 27;
 
 		// scale the DCO step by the current pitchbend amount
 		v.dco_step = v.dco_step_base;

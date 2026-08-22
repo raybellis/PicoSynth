@@ -54,6 +54,15 @@ static inline int32_t fmul_f(int32_t a, int32_t f)
 	return ((a * f) + (1 << 13)) >> 14;
 }
 
+// same again, but for the high term, which is a sum of three things
+// and so reaches six figures where a 32-bit product would overflow.
+// the M33 has a 32x32->64 multiply, which makes the wide intermediate
+// cheap enough to buy the headroom outright
+static inline int32_t fmul_f_wide(int32_t a, int32_t f)
+{
+	return (int32_t)((((int64_t)a * f) + (1 << 13)) >> 14);
+}
+
 // saturate to full scale instead of wrapping, so that a high-Q
 // setting distorts at the rails rather than inverting the signal
 static inline int32_t clamp16(int32_t x)
@@ -81,7 +90,7 @@ void __not_in_flash_func(SVF::apply)(int16_t* buf, size_t n)
 
 		low = clamp16(low + fmul_f(band, f));
 		high = fmul_su(input, scale) - fmul_su(band, q) - low;
-		band = clamp16(band + fmul_f(high, f));
+		band = clamp16(band + fmul_f_wide(high, f));
 		// notch = high + low;
 
 		buf[i] = low;
