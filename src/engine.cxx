@@ -18,15 +18,13 @@
 /// 1:15 fixed-point log2 multipliers for x = 0.500 ..< 2.000
 static inline void frequency_modulate(uint32_t& step, int16_t x)
 {
-	uint32_t mul = power_table[x + 8192] << 1;
+	uint32_t mul = power_table[x + 8192] << 1;	// 1:16
 
-	uint32_t msb = (step >> 16) & 0xffff;
-	uint32_t lsb = step & 0xffff;
-
-	uint32_t r1 = (msb * mul);
-	uint32_t r2 = (lsb * mul);
-
-	step = r1 + (r2 >> 16);
+	// the product needs 48 bits.  this used to be split into 16-bit
+	// halves and reassembled, because ARMv6-M has no 32x32->64
+	// multiply; the M33 does, so one umull covers it.  the result is
+	// bit identical - the old form was exactly this sum
+	step = ((uint64_t)step * mul) >> 16;
 }
 
 // combines a 7-bit patch parameter with its controller, which offsets
