@@ -18,7 +18,15 @@
 /// 1:15 fixed-point log2 multipliers for x = 0.500 ..< 2.000
 static inline void frequency_modulate(uint32_t& step, int16_t x)
 {
-	uint32_t mul = power_table[x + 8192] << 1;	// 1:16
+	// power_table holds 2^(r/8192) as 1:15 for one octave, r in
+	// [0, 8192).  the octave below is the same entries read as 1:16 -
+	// that is, with this shift left omitted - because table[x + 8192]
+	// is by definition 65536 * 2^(x/8192) when x is negative.  exact,
+	// not an approximation, and it is what lets the table be half the
+	// size the +/- range would otherwise need
+	uint32_t mul = (x < 0)
+		? power_table[(x + 8192) >> POWER_SHIFT]		// 1:16, [0.5, 1)
+		: power_table[x >> POWER_SHIFT] << 1;			// 1:16, [1, 2)
 
 	// the product needs 48 bits.  this used to be split into 16-bit
 	// halves and reassembled, because ARMv6-M has no 32x32->64

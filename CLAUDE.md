@@ -152,9 +152,19 @@ skips buffers comes back with state hundreds of samples stale, which is an audib
 
 **Fixed-point conventions.** Phase is 16.16 within a `WAVE_MAX`-sized space (`WAVE_LEN << 16`);
 `note_table` entries are ready-made phase increments for the configured sample rate.
-`frequency_modulate()` applies a pitch offset by 32-bit-multiplying the step by
-`power_table[x + 8192]`, a 1:15 fixed-point 2^(x/8192) multiplier — so all pitch modulation sources
-(bend, DCO envelope, LFO) must be reduced to a 14-bit signed value in that domain before use.
+`frequency_modulate()` applies a pitch offset by multiplying the step by a 1:16 fixed-point
+2^(x/8192) — so all pitch modulation sources (bend, DCO envelope, LFO) must be reduced to a 14-bit
+signed value in that domain before use, `x` spanning one octave either side of unity.
+
+`power_table` only stores the *upper* octave, at `POWER_LEN` entries with the index shifted right
+by `POWER_SHIFT`. The lower octave is the very same entries read as 1:16 rather than 1:15 — the
+shift left is simply omitted — because `table[x + 8192]` is by definition `65536 · 2^(x/8192)` when
+`x` is negative. That is exact, not an approximation, so the fold costs one branch and halves the
+table. It was 16384 entries and 32 KB; it is now 4096 and 8 KB, worst error 0.173 cents against
+0.052, which is some thirty times below the five cents anyone can actually hear. Unity stays exact
+at both ends: `x = 0` gives 65536 and `x = -8192` gives 32768. The branch costs 19 instructions
+across its three inlined call sites in `SynthEngine::update`, which run once per voice per buffer —
+about 0.08% of a core.
 The inline `// N bits` comments in `SynthEngine::update` track accumulator width; preserve and
 update them when changing any scaling step, since overflow here is silent and audible.
 

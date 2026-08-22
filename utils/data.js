@@ -69,8 +69,27 @@ generate("pan_table", 128, 'uint8_t', 2,
 	i => 127 * Math.sqrt(i / 127.0)
 );
 
-generate("power_table", 16384, 'uint16_t', 4,
-	i => Math.round(32768 * Math.pow(2.0, (i - 8192) / 8192))
+// 2^(x/8192) as a 1:15 multiplier, for pitch modulation.  x is a
+// 14-bit signed offset, so the range wanted is one octave either side
+// of unity - but only the upper octave is stored.
+//
+// the lower one is the very same entries read as 1:16 instead of
+// 1:15, which is to say with the shift at the call site omitted: for
+// x < 0, table[x + 8192] already holds 65536 * 2^(x/8192).  that is
+// exact rather than an approximation, so folding costs one branch and
+// halves the table.
+//
+// resolution then costs 2 bytes an entry.  8192 entries an octave -
+// what this had - is 0.15 cents a step, roughly seven times finer
+// than anyone can hear on a sustained tone, and far finer than the
+// modulation itself moves between buffers at 172 Hz.  4096 is 0.29
+// cents and 8 KB
+const power_bits  = 12;					// entries per octave, log2
+const power_len   = 1 << power_bits;
+const power_shift = 13 - power_bits;	// x units per entry, log2
+
+generate("power_table", power_len, 'uint16_t', 4,
+	i => Math.round(32768 * Math.pow(2.0, i / power_len))
 );
 
 // the state variable filter's cutoff coefficient is 2*sin(pi*Fc/Fs),
@@ -229,6 +248,9 @@ out(`#pragma once
 
 #define SVF_LEN     ${svf_len}
 #define SVF_STEPS   ${svf_steps}
+
+#define POWER_LEN   ${power_len}
+#define POWER_SHIFT ${power_shift}
 #define SVF_Q_LEN   ${svf_q_len}
 #define SVF_Q_MAX   ${svf_q_max}
 `);
