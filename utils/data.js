@@ -84,29 +84,31 @@ generate("svf_table", svf_len, 'int16_t', 4, i => {
 // bound for this topology, q < 2/f - f/2, which bottoms out at 1.5
 // where svf_table clamps at Fs/6.
 //
-// the floor is where the resonance stops improving - by Q=64 rounding
-// in the integrators has eaten a fifth of the peak, and past a few
-// hundred there is no peak left to speak of
+// the floor used to be Q = 64, on the grounds that that is where
+// rounding in the integrators starts eating the peak.  it is now 16:
+// reaching the very top was never needed, and giving it up buys a far
+// more even control, for reasons the midpoint note below explains
 const svf_q_max = 32768;			// Q = 1
-const svf_q_min = 512;				// Q = 64
+const svf_q_min = 2048;				// Q = 16
 const svf_q_len = 128;				// one entry per 7-bit patch value
 
-// the sound controllers offset the patch around centre, so a preset
-// that wants CC 71 to reach both ends has to sit at the middle of this
-// table - and the middle is therefore what every patch sounds like
-// before anyone touches a controller.
+// the sound controllers offset the patch around centre, so the middle
+// of this table is what every patch sounds like before anyone touches
+// a controller.  that makes the midpoint the number to tune, and it
+// was tuned by ear: Q = 1.28, about 2 dB of emphasis over the
+// passband.
 //
-// a plain geometric sweep between the endpoints is even in dB, which
-// is the right feel for a resonance control, but it puts that middle
-// at Q = 8, or 18 dB of emphasis over the passband.  far too much for
-// a default.  raising the curve to a power moves the midpoint onto
-// svf_q_mid while pinning both ends, so the presets can stay at 64 and
-// keep their full range.
+// a plain geometric sweep between the endpoints would be even in dB,
+// which is the right feel for a control, but it cannot also put the
+// midpoint that low - the two constraints fight, and the midpoint
+// wins.  so the curve is raised to a power that pins both ends and
+// moves the middle onto svf_q_mid.
 //
-// the cost is an uneven knob: gentle over the lower half, steep over
-// the top quarter.  lowering svf_q_max is the other lever if that
-// matters more than reaching Q = 64.
-const svf_q_mid = 2.0;					// Q at the middle of the table
+// the bottom half is necessarily compressed, because the chosen
+// default sits close to the Q = 1 floor and there is simply nothing
+// between them.  going up from the default is what matters, and that
+// runs 1.28 - 2.8 - 5.9 - 16 across the upper half.
+const svf_q_mid = 1.28;					// Q at the middle of the table
 
 // index 64 is where a preset of 64 with the controller centred lands,
 // which is 64/127 of the way along and not quite one half
@@ -149,6 +151,32 @@ generate("q_table", svf_q_len, 'uint16_t', 4, i => q_values[i]);
 generate("scale_table", svf_q_len, 'uint16_t', 4, i =>
 	Math.round(Math.sqrt(svf_q_max * q_values[i]))
 );
+
+// the cutoff parameter used to scale straight to a MIDI note, one
+// semitone per step, which put the midpoint - and so every preset's
+// default - at note 64, around 330 Hz.  by ear it wants to be note 90,
+// about 1480 Hz, so it gets a curve of its own, indexed by the same
+// 7-bit parameter as the two tables above.
+//
+// the top is note 118 rather than 127 because svf_table saturates at
+// Fs/6, which is note 117.8.  anything above that is the same filter
+// setting, so mapping to it would only waste control travel.
+//
+// the bottom stays at note 0, so the filter can still be closed right
+// down.  that costs resolution at the low end - the first few steps
+// move in three semitone jumps - but only across territory that is
+// muffled to begin with, and it buys sub-semitone steps up where the
+// sweeping actually happens
+const svf_note_max = 118;				// where svf_table stops changing
+const svf_note_mid = 90;				// note at the middle of the table
+
+const svf_note_exp =
+	Math.log(svf_note_mid / svf_note_max) / Math.log(svf_q_u_mid);
+
+generate("cutoff_table", svf_q_len, 'uint16_t', 4, i => {
+	const note = svf_note_max * Math.pow(i / (svf_q_len - 1), svf_note_exp);
+	return Math.min(svf_len - 1, Math.round(note * 128));
+});
 
 fs.closeSync(fh);
 

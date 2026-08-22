@@ -150,7 +150,7 @@ uint32_t __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 		// sound controllers.  this is done per buffer rather than at
 		// note-on so that moving a controller takes effect on notes
 		// that are already sounding
-		v.filter->set_cutoff(cc_offset(p.vcf_freq, chan.control[brightness]) << 7);
+		v.filter->set_cutoff(cutoff_table[cc_offset(p.vcf_freq, chan.control[brightness])]);
 		v.filter->set_q(cc_offset(p.vcf_reso, chan.control[resonance]));
 
 		// apply the filter.  this has to happen even while the voice

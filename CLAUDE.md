@@ -53,8 +53,9 @@ Nothing generated lives in `src/`. Everything below is written into `build/gener
 `add_custom_command` rules at **build time**, so `make` alone is enough after editing a generator:
 
 - `utils/data.js <outdir> <sample_rate> <wave_shift> <buffer_size>` → `data.c` (`note_table`,
-  `pan_table`, `power_table`, `svf_table`), `data.h` (declarations for those four), and
-  `settings.h` (`SAMPLE_RATE`, `BUFFER_SIZE`, `WAVE_SHIFT`, `WAVE_LEN`, `WAVE_MAX`, `SVF_LEN`)
+  `pan_table`, `power_table`, `svf_table`, `q_table`, `scale_table`, `cutoff_table`), `data.h`
+  (declarations for all seven), and `settings.h` (`SAMPLE_RATE`, `BUFFER_SIZE`, `WAVE_SHIFT`,
+  `WAVE_LEN`, `WAVE_MAX`, `SVF_LEN`, `SVF_Q_LEN`, `SVF_Q_MAX`)
 - `utils/waves.js <outdir>` → `waves.c` (2048-sample × 16-bit sine/square/saw/triangle tables and
   the `waves[]` index, declared by the hand-written `src/waves.h`)
 
@@ -159,7 +160,7 @@ entry at 16384 and so keeps the table inside an `int16_t` at any sample rate.
 `q` holds `1/Q`, not `Q`, so *small* values are the resonant ones — Q=2 is 16384, Q=64 is 512.
 `set_q` takes a 7-bit *index*, not a value, and reads the pair `q_table[n]` / `scale_table[n]`; that
 is what guarantees the damping stays where the filter is stable and `fmul_f(high, f)` cannot
-overflow, since no index escapes the table. `q_table` runs Q = 1..64 on a curve bent so its
+overflow, since no index escapes the table. `q_table` runs Q = 1..16 on a curve bent so its
 *midpoint* lands on `svf_q_mid` — see below for why the midpoint is the interesting part. The exact
 stability bound for this update order is
 `q1 < 2/f − f/2`, bottoming out at 1.5 where `f` reaches 1.0, comfortably above the table's ceiling
@@ -226,29 +227,40 @@ safe to move back to RP2040 unchanged:
 ## Current state (branch `filter`)
 
 Work in progress on a state-variable filter (`src/filter.{h,cxx}`, per-voice), now driven by the
-`vcf_freq` / `vcf_reso` fields of `Patch`, offset by CC 74 and CC 71. All four presets are set to
-the values the code used to hard-code, so they sound as they did — they have not been tuned by ear,
-and that is the obvious next thing to do. There is still no filter envelope.
+`vcf_freq` / `vcf_reso` fields of `Patch`, offset by CC 74 and CC 71, and both curves have now been
+tuned by ear on hardware — the presets sit at 64 for both, which lands on Q = 1.28 and a cutoff of
+1480 Hz. There is still no filter envelope.
 
 The two filter controllers follow the MIDI sound-controller convention of offsetting the patch
 around a centre of 64 rather than replacing it (`cc_offset` in `engine.cxx`), which is why
 `Channel()` has to centre them at construction — left at zero they would close every filter to MIDI
-note 0. One consequence is that a parameter's full range is only reachable when the patch's own
-value is 64, which is why both `vcf_freq` and `vcf_reso` are 64 in every preset — at `vcf_reso` =
-21 a full CC 71 would only reach Q ≈ 16.
+note 0.
 
-That has a consequence worth understanding before touching `q_table`: **the middle of the table is
-what every patch sounds like** before anyone moves a controller. A plain geometric sweep from Q=1
-to Q=64 is the natural choice — constant dB per step, the right feel for a resonance control — but
-it puts that middle at Q ≈ 8, which is 18 dB of peak over passband and far too emphatic as a
-default. So the curve is raised to a power that pins both endpoints while moving the midpoint onto
-`svf_q_mid` (2.0, i.e. 6 dB). Change that one constant in `data.js` to retune it.
+**Both presets stay at 64 and both curves are tuned around that**, which is the thing to understand
+before touching either table. Because the controllers offset rather than replace, the *middle* of a
+table is what every patch sounds like before anyone moves a knob — so the midpoint is the number
+that gets tuned, and it was tuned by ear:
 
-The cost is an uneven control: the bend that mildens the middle also flattens the bottom. At
-`svf_q_mid` = 2.0 everything below CC 53 sits under Q = 1.5, which is inaudible, so the lower 40%
-of CC 71 does nothing. That trades directly against the default — 1.5 gives 3.5 dB but kills half
-the control, 3.0 gives 9.5 dB and only wastes below CC 39. Lowering `svf_q_max` from 64 is the
-other lever, at the cost of the top of the range.
+| | midpoint | reached via | curve |
+|---|---|---|---|
+| `q_table` | Q = 1.28, ≈2 dB emphasis | `svf_q_mid` | Q = 1..16, power-bent |
+| `cutoff_table` | MIDI note 90, 1480 Hz | `svf_note_mid` | note 0..118, power-bent |
+
+Both are one constant each in `data.js`. Neither is a plain sweep, because a plain sweep cannot
+have both a sane midpoint and a wide range — the two constraints fight and the midpoint wins, so
+each curve is raised to a power that pins its endpoints while placing the middle.
+
+What that costs, in each case, is resolution at the end furthest from the midpoint. For resonance
+the bottom half is compressed to nothing, but only because the chosen default sits close to the
+Q = 1 floor and there is genuinely nothing between them; the useful travel is upward, 1.28 → 2.8 →
+5.9 → 16 across the top half. For cutoff the lowest steps move in ~3-semitone jumps, across
+territory that is muffled anyway, in exchange for sub-semitone steps up where sweeping happens.
+
+Two bounds worth keeping if you retune them. `svf_q_min` is 2048 (Q = 16) rather than 512 (Q = 64)
+because the extreme top was never wanted and giving it up made the curve far more even. And
+`svf_note_max` is 118, not 127, because `svf_table` saturates at `Fs/6` — note 117.8 — so mapping
+above that is the same filter setting and would only waste control travel. Exactly one of the 128
+cutoff steps is redundantly wide open; a naive offset-based mapping wasted about 35.
 
 Unlike the rest of the per-voice parameters, the filter is configured in `SynthEngine::update`
 rather than latched in `Voice::note_on`, so that moving a controller affects notes already
@@ -278,7 +290,7 @@ documented here as a known defect.
 There is deliberately **no** clamp on the state. Three things bound it: the input is an `int16_t`,
 every table entry keeps the filter stable, and a stable filter's state cannot exceed input × peak
 gain. Measured over 9 cutoffs × all 128 resonances × square/saw/sine/impulse/DC/noise at full
-scale, the state peaks at 353512 — 2^18.4, or 6000× inside `int32_t` — and a 60-second run shows no
+scale, the state peaks at 178575 — 2^17.4, or 12000× inside `int32_t` — and a 60-second run shows no
 drift, with silence settling to exactly zero and DC settling to the filter's DC gain. A clamp cost
 19 instructions a sample and could only ever fire if one of those three premises broke.
 
