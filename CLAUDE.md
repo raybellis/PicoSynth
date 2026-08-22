@@ -213,8 +213,10 @@ rather than latched in `Voice::note_on`, so that moving a controller affects not
 sounding. That makes the coefficients step once per buffer (172 Hz at the default settings), which
 is normal for block-based synthesis but can zipper on a fast sweep at high resonance.
 
-None of the recent filter work has been verified on hardware; it is backed by compilation,
-disassembly, symbol placement and numerical simulation only.
+The firmware runs on RP2350 hardware and the filter work has been heard. The numbers behind it —
+the response curves, the Q range, the passband/peak split, the overflow margin — are still from
+simulation against the generated tables rather than from measuring the board's output, so treat
+them as designed-for rather than measured-on-hardware values.
 
 `fmul_f(high, f)` can in principle overflow `int32_t` at high `q`, and `clamp16` would then saturate
 the wrapped value into a full-scale sign flip. The `SVF_Q_MAX` cap puts this out of reach — worst
