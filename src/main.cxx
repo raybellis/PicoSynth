@@ -219,9 +219,22 @@ void audio_task(void)
 		data
 	};
 
-	queue_add_blocking(&bench_queue, &entry);
+	// dropping a benchmark sample is always better than stalling the
+	// audio for one.  the queue holds 64 entries, which is only 371 ms
+	// at 44.1 kHz, so blocking here hands core 0 the power to silence
+	// core 1 just by being busy for a third of a second
+	queue_try_add(&bench_queue, &entry);
 
-	struct audio_buffer *buffer = take_audio_buffer(ap, true);
+	// asking take_audio_buffer to block deadlocks on core 1: it waits
+	// on __wfe(), and the wake never comes, because the DMA interrupt
+	// that frees buffers belongs to core 0, where audio_init() ran.
+	// polling sees exactly the same buffers come back, and this core
+	// has nothing else it should be doing anyway
+	struct audio_buffer *buffer;
+	while (!(buffer = take_audio_buffer(ap, false))) {
+		tight_loop_contents();
+	}
+
 	int16_t *out = (int16_t *) buffer->buffer->bytes;
 
 	for (auto i = 0U; i < 2 * buffer->max_sample_count; ++i) {

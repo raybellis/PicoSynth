@@ -92,6 +92,21 @@ two SDK `queue_t`s: `midi_queue` (4-byte USB-MIDI-style packets, core 0 → core
 (timing samples, core 1 → core 0). Keep this boundary: anything touching `SynthEngine` state must
 happen on core 1, and anything blocking must stay off it.
 
+That last rule is not stylistic — it was the cause of a hard boot hang on RP2350, and it cost a long
+bisect to find. `audio_task` used to call `take_audio_buffer(ap, true)`, whose blocking path waits
+on `__wfe()`. The wake never comes on core 1, because the DMA interrupt that frees audio buffers is
+installed on core 0, where `audio_init()` runs. The pool holds three buffers, so the hang only
+happens once core 1 arrives while all three are in flight — which is why it looked like "enabling
+the filter crashes it": the filter added enough per-voice work to change the timing, not to break
+anything. Both calls in `audio_task` are now non-blocking (`take_audio_buffer(ap, false)` in a poll
+loop, `queue_try_add` for the bench queue). If you add anything to core 1, check it the same way.
+
+The symptom is worth recognising because it does not look like a core 1 problem: core 0 goes dark
+too, USB never enumerates, and the LED never blinks. Core 1 stalling is enough to do that, either
+through a lock it holds or, as here, by core 0 waiting on it. Bisecting it needs the LED, since
+`printf` takes the stdio lock and a wedged core 1 can hold that too — see `git log` around the
+RP2350 port for the beacon technique.
+
 **MIDI ingress converges on one format.** Both USB (`tud_midi_rx_cb`) and serial MIDI
 (`midi_serial_irq` on UART1, pins 4/5, 31250 baud, with its own running-status/SysEx-skipping state
 machine) build a 4-byte packet and call `process_packet()`, which drops non-zero cable numbers and
