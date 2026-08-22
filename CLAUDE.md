@@ -150,6 +150,16 @@ when adding to it. The tables stay in flash deliberately: they are read once per
 sample. Note also that the filter runs *before* the `if (!dca) continue;` early-out — a filter that
 skips buffers comes back with state hundreds of samples stale, which is an audible click.
 
+**Their total size is a performance parameter, not just a flash figure**, and that is easy to get
+wrong — I got it wrong. The reads are infrequent (four per voice per buffer: one `svf_table`, up to
+three `power_table`), which makes it tempting to conclude the tables cannot matter. What matters is
+not the read rate but whether the working set fits the XIP cache. Shrinking them from 66 KB to
+13.7 KB measured **25,000 cycles a buffer** at 64 voices — `bench_max` 3,400,000 ns → 3,300,000 —
+which works out at about 98 cycles per table read, the right order for a flash miss becoming a hit.
+Take the figure as indicative rather than exact: `bench_max` is a lifetime maximum from one run, and
+2.9% is within what a max statistic can wander. But the direction is real, so growing the tables
+back has a cost that the read counts alone will not predict.
+
 **Fixed-point conventions.** Phase is 16.16 within a `WAVE_MAX`-sized space (`WAVE_LEN << 16`);
 `note_table` entries are ready-made phase increments for the configured sample rate.
 `frequency_modulate()` applies a pitch offset by multiplying the step by a 1:16 fixed-point
@@ -349,14 +359,19 @@ latency against one of throughput, and the SVF is a strict serial recurrence, `l
 
 | | bench_max | of deadline | cycles/voice-sample | instr | CPI |
 |---|---|---|---|---|---|
-| fixed point | 4,700,000 ns | 81.0% | 71.7 | 51 | 1.41 |
-| float | 3,400,000 ns | 58.6% | 51.9 | 32 | 1.62 |
+| fixed point, 66 KB tables | 4,700,000 ns | 81.0% | 71.7 | 51 | 1.41 |
+| float, 66 KB tables | 3,400,000 ns | 58.6% | 51.9 | 32 | 1.62 |
+| float, 13.7 KB tables | 3,300,000 ns | 56.8% | 50.4 | 32 | 1.57 |
 
 The latency worry was real — CPI got *worse*, 1.41 → 1.62 — but the instruction count fell far
-enough to win by 27.7% anyway. Note also what that table says about everything outside the sample
-loops: at 1.6 CPI those account for ~13,100 of the 13,281 cycles per voice-buffer, so the DCA chain,
-the envelope virtuals and the `set_cutoff`/`set_q` veneers into flash come to about 1% between them.
-Optimising any of those is not worth the trouble; the sample loops are the only thing that matters.
+enough to win by 27.7% anyway. The third row is the table shrink, which cost nothing in
+instructions and took another 25,000 cycles off the buffer; see the XIP note earlier for why size
+rather than read count is what did that. Cumulatively 4,700,000 → 3,300,000, 29.8% faster.
+
+Note also what the table says about everything *outside* the sample loops: they account for roughly
+13,100 of the 13,281 cycles a voice costs per buffer, so the DCA chain, the envelope virtuals and
+the `set_cutoff`/`set_q` veneers into flash come to about 1% between them. Optimising any of those
+is not worth the trouble; the sample loops are the only thing that matters.
 
 Numerically float is also a clear improvement: against a double-precision reference with the same
 output clip, SNR went from 89–92 dB to 114–126 dB, bit-exact at low levels, and IEEE rounding makes
