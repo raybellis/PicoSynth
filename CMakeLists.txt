@@ -13,10 +13,22 @@ set(PROJECT PicoSynth)
 set(CONFIG_PICO_PLATFORM rp2350)
 set(CONFIG_PICO_BOARD    pico2)
 
-# audio parameters
-set(CONFIG_SAMPLE_RATE 44100)
+# audio parameters.
+#
+# 288 samples at 48 kHz is 6 ms, which is exactly 6 USB frames - the
+# block size and the USB frame rate line up, which the USB audio
+# backend wants.  it is also the size that keeps the *envelopes* close
+# to how they were tuned: they tick once per buffer with fixed
+# increments, so their timing follows the buffer period, and 6 ms is
+# near the 5.805 ms of the old 44.1 kHz / 256 arrangement.
+#
+# the LFO moves the other way - its rate is note_table[f] / buffer
+# size, so a bigger block makes it slower, 11% here.  no block size
+# preserves both; envelopes won because they are audible on every
+# note, where the LFO only speaks when the mod wheel is up
+set(CONFIG_SAMPLE_RATE 48000)
 set(CONFIG_WAVE_SHIFT  11)
-set(CONFIG_BUFFER_SIZE 256)
+set(CONFIG_BUFFER_SIZE 288)
 
 # set to 1 to enable LCD debug output
 set(CONFIG_LCD_ACTIVE 1)
@@ -87,7 +99,7 @@ add_custom_target(version ALL
 add_executable(${PROJECT}
 	src/main.cxx
 	src/usb_descriptors.c
-	src/audio.c
+	src/audio_i2s.c
 	src/engine.cxx
 	src/voice.cxx
 	src/channel.cxx

@@ -26,11 +26,9 @@ _Static_assert(SVF_Q_MIN >= 1 && SVF_Q_MIN < SVF_Q_MAX,
 	"q_table would leave the range the filter is stable over");
 _Static_assert(SVF_Q_MID > 1.0f && SVF_Q_MID < (float)SVF_Q_MAX / SVF_Q_MIN,
 	"the q curve midpoint must lie between the endpoints");
-_Static_assert(SVF_NOTE_MID > 0.0f && SVF_NOTE_MID < SVF_NOTE_MAX,
-	"the cutoff curve midpoint must lie between the endpoints");
+_Static_assert(SVF_NOTE_MID > 0.0f && SVF_NOTE_MID < 128.0f,
+	"the cutoff curve midpoint must be a MIDI note");
 _Static_assert(POWER_SHIFT >= 0, "power_table cannot be finer than 1/8192 octave");
-_Static_assert(SVF_NOTE_MAX * SVF_STEPS < SVF_LEN,
-	"cutoff_table would index past the end of svf_table");
 
 uint32_t	note_table[128];
 uint8_t		pan_table[128];
@@ -97,11 +95,16 @@ void tables_init(void)
 		scale_table[i] = (uint16_t)lrintf(sqrtf((float)SVF_Q_MAX * q_table[i]));
 	}
 
+	// the top of the cutoff range is the note at which svf_table
+	// saturates - Fs/6 - so it tracks the sample rate instead of being
+	// written down and going stale when that changes
+	const float note_max = 69.0f + 12.0f * log2f(fc_max / 440.0f);
+
 	// same shape again, for the cutoff
-	const float n_exp = logf(SVF_NOTE_MID / SVF_NOTE_MAX) / logf(u_mid);
+	const float n_exp = logf(SVF_NOTE_MID / note_max) / logf(u_mid);
 
 	for (int i = 0; i < SVF_Q_LEN; ++i) {
-		float note = SVF_NOTE_MAX * powf((float)i / (SVF_Q_LEN - 1), n_exp);
+		float note = note_max * powf((float)i / (SVF_Q_LEN - 1), n_exp);
 		int32_t idx = lrintf(note * SVF_STEPS);
 		cutoff_table[i] = (idx < SVF_LEN) ? idx : (SVF_LEN - 1);
 	}

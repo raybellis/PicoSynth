@@ -37,10 +37,10 @@
 #define SVF_Q_MID		1.28f			// Q at the middle of q_table
 #define SVF_NOTE_MID	90.0f			// note at the middle of cutoff_table
 
-// cutoff_table stops here rather than at 127 because svf_table
-// saturates at Fs/6, which is note 117.8 - mapping above that would
-// only waste control travel
-#define SVF_NOTE_MAX	118.0f
+// cutoff_table stops where svf_table saturates, at Fs/6, rather than
+// at note 127 - mapping above it would only waste control travel.
+// that note depends on the sample rate, so tables.c derives it rather
+// than having it written down here and quietly going stale
 
 //--------------------------------------------------------------------+
 // Pitch modulation
