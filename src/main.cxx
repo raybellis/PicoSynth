@@ -30,7 +30,6 @@
 
 
 SynthEngine engine;
-static audio_buffer_pool *ap = nullptr;
 
 static queue_t midi_queue;
 
@@ -257,24 +256,20 @@ void audio_task(void)
 	// core 1 just by being busy for a third of a second
 	queue_try_add(&bench_queue, &entry);
 
-	// asking take_audio_buffer to block deadlocks on core 1: it waits
-	// on __wfe(), and the wake never comes, because the DMA interrupt
-	// that frees buffers belongs to core 0, where audio_init() ran.
-	// polling sees exactly the same buffers come back, and this core
-	// has nothing else it should be doing anyway
-	struct audio_buffer *buffer;
-	while (!(buffer = take_audio_buffer(ap, false))) {
+	// audio_take never blocks - on core 1 it must not, and asking the
+	// I2S backend to block once cost a whole boot hang.  polling sees
+	// exactly the same buffers come back, and this core has nothing
+	// else it should be doing while it waits
+	int16_t *out;
+	while (!(out = audio_take())) {
 		tight_loop_contents();
 	}
 
-	int16_t *out = (int16_t *) buffer->buffer->bytes;
-
-	for (auto i = 0U; i < 2 * buffer->max_sample_count; ++i) {
+	for (auto i = 0U; i < 2 * BUFFER_SIZE; ++i) {
 		out[i] = samples[i] >> 6;
 	}
 
-	buffer->sample_count = buffer->max_sample_count;
-	give_audio_buffer(ap, buffer);
+	audio_give();
 }
 
 // FPSCR is per core, and the filter runs entirely on this one.
@@ -421,7 +416,7 @@ int main() {
 	}
 
 	board_init();
-	ap = audio_init();
+	audio_init();
 	lcd_init();
 	tusb_init();
 	midi_init();
