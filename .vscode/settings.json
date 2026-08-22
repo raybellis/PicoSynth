@@ -5,10 +5,12 @@
         "PICO_HOME": "/opt/pico"
     },
 
-    // keep CMake Tools out of build/, which is configured from the
-    // command line and whose cache pins PICO_PLATFORM and PICO_BOARD -
-    // a configure here with a different kit would overwrite it
-    "cmake.buildDirectory": "${workspaceFolder}/build-vscode",
+    // CMake Tools shares build/ with the command line, so both see the
+    // same cache and the same generated tables.  that cache pins
+    // PICO_PLATFORM and PICO_BOARD, and configuring with a different
+    // kit would overwrite them, which is why it is not allowed to
+    // configure on its own initiative
+    "cmake.buildDirectory": "${workspaceFolder}/build",
     "cmake.configureOnOpen": false,
 
     // clangd reads the compile database from the command line build,
