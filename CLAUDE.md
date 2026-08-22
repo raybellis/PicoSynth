@@ -198,7 +198,8 @@ safe to move back to RP2040 unchanged:
 - the DCA chain in `SynthEngine::update` carries all 43 bits instead of shifting twice partway
   through to stay in range, which recovers 11 bits and retires a multiply that finished within 1%
   of overflowing `uint32_t`.
-- `fmul_f_wide` in `filter.cxx`, for the `high` term only — see below.
+- three of the four multiplies in `SVF::apply`, which is what lets the integrators run at their
+  true width instead of being clamped to `int16_t` — see below.
 
 ## Current state (branch `filter`)
 
@@ -226,13 +227,26 @@ the response curves, the Q range, the passband/peak split, the overflow margin �
 simulation against the generated tables rather than from measuring the board's output, so treat
 them as designed-for rather than measured-on-hardware values.
 
-The `fmul_f(high, f)` overflow that used to be listed here as a known defect is gone. `high` is a
-sum of three terms and reaches six figures, where a 32-bit product would wrap and `clamp16` would
-saturate the wrapped value into a full-scale sign flip. It is now `fmul_f_wide`, which takes a
-64-bit intermediate — one `smlal` on the M33, measured at three extra instructions a sample, about
-1.7% of a core at 32 voices. The 32-bit form was not actually overflowing at the current bounds, so
-this is headroom rather than a live fix; the point of buying it is that `q_table` and `scale_table`
-can now be changed without re-deriving the margin each time. The other three multiplies in the loop
-stay 32-bit, because their operands are `clamp16`-bounded and cannot overflow.
+**Only the filter's output is clamped, never its state.** This matters more than it sounds. The
+lowpass peak legitimately reaches `sqrt(Q)` times the input, so with a full-scale oscillator and
+Q=64 the integrators need to swing to about 2^18. Clamping them at `int16_t`, as this used to,
+saturates *inside* the feedback loop — a nonlinearity, not a clip — and it destroys the response at
+any useful resonance. Measured against the ideal filter with the same output clip, a full-scale
+input gave 9 dB SNR at Q=8 and 6.9 dB at Q=64; letting the state run and clamping only `buf[i]`
+gives 86 dB and 81 dB. Below about Q=4, or at low input levels, the two are identical, so the old
+scheme looked fine right up until resonance was actually used.
+
+That is what the wide multiplies buy: `band` no longer fits the 32-bit products, so `fmul_su_wide`
+and `fmul_f_wide` take 64-bit intermediates. Only `fmul_su(input, scale)` stays narrow, because its
+operand really is an `int16_t`. Three `smlal` and one `mul.w`, 61 instructions against the old 52 —
+about 5% of a core at 32 voices, and it also retires the `fmul_f(high, f)` overflow that used to be
+documented here as a known defect.
+
+There is deliberately **no** clamp on the state. Three things bound it: the input is an `int16_t`,
+every table entry keeps the filter stable, and a stable filter's state cannot exceed input × peak
+gain. Measured over 9 cutoffs × all 128 resonances × square/saw/sine/impulse/DC/noise at full
+scale, the state peaks at 353512 — 2^18.4, or 6000× inside `int32_t` — and a 60-second run shows no
+drift, with silence settling to exactly zero and DC settling to the filter's DC gain. A clamp cost
+19 instructions a sample and could only ever fire if one of those three premises broke.
 
 `README.md` advertises 128 voices; `VoicePool::nv` is presently 32. Trust the code.
