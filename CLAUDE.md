@@ -63,7 +63,7 @@ Nothing generated lives in `src/`. Everything below is written into `build/gener
 - `utils/data.js <outdir> <sample_rate> <wave_shift> <buffer_size>` → `data.c` (`note_table`,
   `pan_table`, `power_table`, `svf_table`, `q_table`, `scale_table`, `cutoff_table`), `data.h`
   (declarations for all seven), and `settings.h` (`SAMPLE_RATE`, `BUFFER_SIZE`, `WAVE_SHIFT`,
-  `WAVE_LEN`, `WAVE_MAX`, `SVF_LEN`, `SVF_Q_LEN`, `SVF_Q_MAX`)
+  `WAVE_LEN`, `WAVE_MAX`, `SVF_LEN`, `SVF_STEPS`, `SVF_Q_LEN`, `SVF_Q_MAX`)
 - `utils/waves.js <outdir>` → `waves.c` (2048-sample × 16-bit sine/square/saw/triangle tables and
   the `waves[]` index, declared by the hand-written `src/waves.h`)
 
@@ -171,6 +171,16 @@ are 1:15, while the cutoff coefficient is 2:14, because the Chamberlin SVF needs
 `f = 2·sin(π·Fc/Fs)` and 2.0 will not fit in 1:15. `svf_table` is clamped at `Fs/6`, the stability
 limit of this topology, which also caps every entry at 16384 and so keeps the table inside an
 `int16_t` at any sample rate.
+
+`svf_table` is indexed in units of 1/`SVF_STEPS` of a semitone, presently 1/16, giving 2048 entries
+and 4 KB. It was 1/128 and 32 KB, which bought a quarter of a cent of precision that nothing could
+use: only 128 of those entries were ever reachable, because the only thing that indexes the table is
+`cutoff_table`, and that has one entry per value of a 7-bit parameter. The sub-semitone resolution
+that remains is there for a filter envelope to sweep through — which is also why `set_cutoff` still
+takes a fine index rather than a 7-bit one. 1/16 semitone is 3.1 cents worst case, well below
+audibility for a cutoff and finer than a sweep moves between buffers anyway, since the coefficients
+only change at 172 Hz. Shrinking it left every selectable cutoff within 3.1 cents and the preset
+default bit-identical, note 90 being an exact multiple of the step.
 
 `q` holds `1/Q`, not `Q`, so *small* values are the resonant ones. `set_q` takes a 7-bit *index*,
 not a value, and reads the pair `q_table[n]` / `scale_table[n]`; that is what guarantees the damping

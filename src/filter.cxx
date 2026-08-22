@@ -5,8 +5,11 @@
 
 // https://www.musicdsp.org/en/latest/Filters/23-state-variable.html
 
-// cutoff is in units of 1/128th of a semitone, and indexes directly
-// into the generated tables, so it must stay within their bounds
+// cutoff is in units of 1/SVF_STEPS of a semitone, and indexes
+// directly into svf_table, so it must stay within its bounds.  the
+// 7-bit patch parameter reaches it through cutoff_table rather than
+// arriving here directly - the fine units exist so that a future
+// filter envelope can sweep between them
 void Filter::set_cutoff(uint16_t n)
 {
 	cutoff = (n < SVF_LEN) ? n : (SVF_LEN - 1);

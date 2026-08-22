@@ -17,8 +17,20 @@ fs.mkdirSync(dir, { recursive: true });
 const wave_len    = (1 << wave_shift);
 const wave_max    = 0x10000 * wave_len;
 
-// 128 MIDI notes at 128 steps per semitone
-const svf_len     = 128 * 128;
+// 128 MIDI notes, at svf_steps steps per semitone.
+//
+// only 128 entries of this are reachable today, because the only
+// thing that indexes it is cutoff_table, which has one entry per
+// value of a 7-bit parameter.  the sub-semitone resolution is there
+// for a filter envelope to sweep through, which does not exist yet.
+//
+// it used to be 128 steps per semitone, which cost 32 KB to hold a
+// quarter of a cent of precision.  16 steps is 4 KB and lands within
+// 3.1 cents worst case - far below anything audible as a cutoff
+// error, and finer than the motion of a sweep between buffers, since
+// the coefficients only change at 172 Hz
+const svf_steps   = 16;
+const svf_len     = 128 * svf_steps;
 
 const out = (...args) => fs.writeSync(fh, ...args);
 
@@ -70,7 +82,7 @@ generate("power_table", 16384, 'uint16_t', 4,
 const svf_max = sample_rate / 6;
 
 generate("svf_table", svf_len, 'int16_t', 4, i => {
-	i /= 128;
+	i /= svf_steps;
 	const cutoff = Math.min(440.0 * Math.pow(2.0, (i - 69) / 12), svf_max);
 	return Math.round(16384 * 2 * Math.sin(Math.PI * cutoff / sample_rate));
 });
@@ -175,7 +187,7 @@ const svf_note_exp =
 
 generate("cutoff_table", svf_q_len, 'uint16_t', 4, i => {
 	const note = svf_note_max * Math.pow(i / (svf_q_len - 1), svf_note_exp);
-	return Math.min(svf_len - 1, Math.round(note * 128));
+	return Math.min(svf_len - 1, Math.round(note * svf_steps));
 });
 
 fs.closeSync(fh);
@@ -216,6 +228,7 @@ out(`#pragma once
 #define WAVE_MAX    0x${wave_max.toString(16)}
 
 #define SVF_LEN     ${svf_len}
+#define SVF_STEPS   ${svf_steps}
 #define SVF_Q_LEN   ${svf_q_len}
 #define SVF_Q_MAX   ${svf_q_max}
 `);
