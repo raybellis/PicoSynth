@@ -1,10 +1,13 @@
 #include <string>
+#include <cstdio>
 
 #include "pico/stdlib.h"
+#include "hardware/watchdog.h"
 #include "pico/multicore.h"
 #include "pico/util/queue.h"
 #include "hardware/clocks.h"
 #include "hardware/irq.h"
+#include "hardware/timer.h"
 #include "hardware/uart.h"
 #include "hardware/gpio.h"
 #include "hardware/vreg.h"
@@ -103,6 +106,142 @@ static inline void rgb_set(uint pin, bool on)
 }
 
 //--------------------------------------------------------------------+
+// Hard fault reporting
+//--------------------------------------------------------------------+
+
+// A fault on this board is otherwise invisible.  stdio is UART-only and
+// generally unwired, the LEDs can say *that* something died but not
+// where, and a fault on either core takes the other down with it - core
+// 0 wedges the moment tud_task() touches a spinlock core 1 died holding,
+// which looks like a hang in TinyUSB rather than a fault anywhere near
+// the real culprit.
+//
+// So: stash the exception frame somewhere the runtime will not clear,
+// reboot, and put it on the LCD once that is back up.  The section is
+// the whole mechanism - .uninitialized_data survives a warm reset, and a
+// watchdog reboot is one.
+//
+// This catches panic() and hard_assert() as well as genuine memory
+// faults: both end in a breakpoint, and a breakpoint with no debugger
+// attached escalates to HardFault (hfsr bit 31, cfsr zero).  That is
+// exactly how the USB isochronous endpoint bug was finally identified,
+// after several rounds of guessing from LED states.
+#define FAULT_TRACE		6
+
+struct fault_info {
+	uint32_t	magic;
+	uint32_t	core;
+	uint32_t	pc, lr, psr;
+	uint32_t	cfsr, hfsr;
+	uint32_t	trace[FAULT_TRACE];
+};
+
+#define FAULT_MAGIC		0xfa17ed00
+
+static struct fault_info __uninitialized_ram(fault_info);
+
+extern "C" void hardfault_report(uint32_t* frame)
+{
+	fault_info.core = get_core_num();
+
+	// the frame the hardware pushed: r0 r1 r2 r3 r12 lr pc xpsr
+	fault_info.pc   = frame[6];
+	fault_info.lr   = frame[5];
+	fault_info.psr  = frame[7];
+
+	fault_info.cfsr = *(volatile uint32_t*)0xe000ed28;	// SCB->CFSR
+	fault_info.hfsr = *(volatile uint32_t*)0xe000ed2c;	// SCB->HFSR
+
+	// A poor man's backtrace.  panic() is several frames below the
+	// breakpoint by the time it fires, and the exception frame's lr only
+	// points back into panic itself - so whoever actually asserted is
+	// not in the frame at all.  Scanning the stack for anything that
+	// looks like a return address into flash finds it, along with some
+	// false positives that addr2line makes obvious.
+	extern char __flash_binary_start, __flash_binary_end;
+
+	const uint32_t lo  = (uint32_t)&__flash_binary_start;
+	const uint32_t hi  = (uint32_t)&__flash_binary_end;
+	const uint32_t top = 0x20082000;					// end of SRAM
+
+	uint32_t n = 0;
+	for (uint32_t i = 0; i < 512 && n < FAULT_TRACE; ++i) {
+		uint32_t* p = frame + i;
+
+		if ((uint32_t)p >= top) break;
+
+		uint32_t w = *p;
+		if ((w & 1) && (w & ~1u) >= lo && (w & ~1u) < hi) {
+			fault_info.trace[n++] = w & ~1u;
+		}
+	}
+	while (n < FAULT_TRACE) {
+		fault_info.trace[n++] = 0;
+	}
+
+	fault_info.magic = FAULT_MAGIC;
+
+	watchdog_reboot(0, 0, 0);
+
+	while (true) {
+		tight_loop_contents();
+	}
+}
+
+// naked, so the frame is still exactly where the exception left it and
+// nothing of ours has run to disturb r0
+extern "C" __attribute__((naked)) void isr_hardfault(void)
+{
+	__asm volatile (
+		"tst	lr, #4				\n"
+		"ite	eq					\n"
+		"mrseq	r0, msp				\n"
+		"mrsne	r0, psp				\n"
+		"b		hardfault_report	\n"
+	);
+}
+
+//--------------------------------------------------------------------+
+// USB service
+//--------------------------------------------------------------------+
+
+// tud_task() runs from a timer, not from the main loop.
+//
+// The main loop cannot be trusted to be prompt: benchmark_task() calls
+// lcd->update(), which ends in dma_channel_wait_for_finish_blocking()
+// and holds core 0 for about 62 ms pushing 150 KB over SPI.  The host
+// polls the isochronous IN endpoint every 1 ms, and an endpoint that is
+// not re-armed in time simply misses that frame - which measured as
+// 550 of every 1000 frames served, and sounded like it.
+//
+// Servicing USB from a timer decouples the two: the display can block
+// for as long as it likes and the endpoint is still re-armed within
+// USB_PUMP_US.  Nothing in the path needs thread context - the audio
+// callback only copies from a ring buffer, and process_packet() already
+// runs from the UART interrupt.
+//
+// Priority sits *below* USBCTRL_IRQ's 0x80, so the USB interrupt can
+// still preempt this and post the completions it is draining.
+#define USB_PUMP_US		250
+
+static void usb_pump_cb(uint alarm)
+{
+	tud_task();
+
+	// re-armed from the end, so a long tud_task() cannot re-enter itself
+	hardware_alarm_set_target(alarm, delayed_by_us(get_absolute_time(), USB_PUMP_US));
+}
+
+static void usb_pump_init(void)
+{
+	int alarm = hardware_alarm_claim_unused(true);
+
+	hardware_alarm_set_callback(alarm, usb_pump_cb);
+	irq_set_priority(timer_hardware_alarm_get_irq_num(timer_hw, alarm), 0xc0);
+	hardware_alarm_set_target(alarm, delayed_by_us(get_absolute_time(), USB_PUMP_US));
+}
+
+//--------------------------------------------------------------------+
 // MIDI packet dispatch
 //--------------------------------------------------------------------+
 
@@ -113,7 +252,12 @@ static void process_packet(uint8_t *packet)
 	uint8_t cable = packet[0] & 0xf0;
 	if (cable != 0) return;
 
-	queue_add_blocking(&midi_queue, packet);
+	// try_add, not add_blocking.  this runs inside tud_task() and also
+	// inside the UART interrupt handler, so blocking here stalls core
+	// 0 - and it blocks against core 1 draining the queue, which is
+	// exactly the coupling that has bitten twice already.  dropping a
+	// MIDI message beats hanging the device
+	queue_try_add(&midi_queue, packet);
 }
 
 //--------------------------------------------------------------------+
@@ -234,6 +378,7 @@ void midi_init()
 
 int32_t samples[2 * BUFFER_SIZE];
 
+
 void audio_task(void)
 {
 	uint32_t t0 = bench_time();
@@ -331,6 +476,57 @@ void lcd_init()
 }
 #endif
 
+// Show a fault captured before the last reboot, and stop.
+// Stopping is deliberate - if it carried on, the host would re-attach,
+// it would fault again, and the report would flicker past on a reboot
+// loop instead of sitting still long enough to read
+static void show_fault(const struct fault_info* f)
+{
+#if CONFIG_LCD_ACTIVE
+	using namespace pimoroni;
+
+	char buf[64];
+
+	graphics->set_pen(0, 0, 0);
+	graphics->clear();
+
+	graphics->set_pen(255, 96, 96);
+	snprintf(buf, sizeof(buf), "HARD FAULT core %u", (unsigned)f->core);
+	graphics->text(buf, Point(4, 4), 310);
+
+	graphics->set_pen(255, 255, 255);
+	int y = 26;
+
+	snprintf(buf, sizeof(buf), "pc %08lx  cfsr %08lx",
+		(unsigned long)f->pc, (unsigned long)f->cfsr);
+	graphics->text(buf, Point(4, y), 310);
+	y += 18;
+
+	snprintf(buf, sizeof(buf), "lr %08lx  hfsr %08lx",
+		(unsigned long)f->lr, (unsigned long)f->hfsr);
+	graphics->text(buf, Point(4, y), 310);
+	y += 22;
+
+	// the stack scan - this is the part that names the caller
+	graphics->set_pen(160, 200, 255);
+	for (uint32_t i = 0; i < FAULT_TRACE; ++i) {
+		if (!f->trace[i]) break;
+
+		snprintf(buf, sizeof(buf), "t%lu %08lx",
+			(unsigned long)i, (unsigned long)f->trace[i]);
+		graphics->text(buf, Point(4, y), 310);
+		y += 18;
+	}
+
+	graphics->set_pen(128, 128, 128);
+	graphics->text(GIT_VERSION, Point(4, y + 6), 310);
+
+	lcd->update(graphics);
+#else
+	(void)f;
+#endif
+}
+
 //--------------------------------------------------------------------+
 // Benchmarking
 //--------------------------------------------------------------------+
@@ -357,7 +553,10 @@ void benchmark_task()
 		}
 	}
 
-	// refresh every 250 ms
+	// refresh every 250 ms.  This blocks for ~62 ms - lcd->update() ends
+	// in dma_channel_wait_for_finish_blocking() - which is survivable
+	// only because USB is no longer serviced from this loop; see
+	// usb_pump_cb()
 	if (board_millis() - start_ms < 250) return;
 	start_ms += 250;
 
@@ -423,17 +622,35 @@ int main() {
 	board_init();
 	audio_init();
 	lcd_init();
+
+	// a fault captured before the last reboot outranks
+	// everything else.  Report it before USB comes up, so the host
+	// cannot provoke the same fault again while it is being read
+	if (fault_info.magic == FAULT_MAGIC) {
+		fault_info.magic = 0;
+		show_fault(&fault_info);
+
+		while (true) {
+			tight_loop_contents();
+		}
+	}
+
 	tusb_init();
 	midi_init();
 
 	queue_init(&midi_queue, 4, 64);
 	queue_init(&bench_queue, sizeof(bench_entry), 64);
 
+	// after tusb_init(), and after the queues it feeds
+	usb_pump_init();
+
 	multicore_launch_core1(audio_loop);
 
 	while (1)
 	{
-		tud_task();
+		// no tud_task() here - it runs from a timer, see usb_pump_cb().
+		// benchmark_task() blocks for ~62 ms in the LCD update, which is
+		// 62 missed USB frames if the two share this loop
 		led_blinking_task();
 		benchmark_task();
 	}

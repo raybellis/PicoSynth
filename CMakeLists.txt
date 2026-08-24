@@ -30,6 +30,10 @@ set(CONFIG_SAMPLE_RATE 48000)
 set(CONFIG_WAVE_SHIFT  11)
 set(CONFIG_BUFFER_SIZE 288)
 
+# audio transport: 0 for I2S, 1 for USB audio (a UAC2 input device,
+# alongside the existing MIDI interface)
+set(CONFIG_AUDIO_USB 0)
+
 # set to 1 to enable LCD debug output
 set(CONFIG_LCD_ACTIVE 1)
 
@@ -86,6 +90,12 @@ set(GENERATED ${CMAKE_CURRENT_BINARY_DIR}/generated/tables)
 # time - it exists to say what is on the board, so it has to track
 # commits.  the script only rewrites version.h when the revision
 # actually changes, so this does not force a relink each time
+if (${CONFIG_AUDIO_USB})
+	set(AUDIO_BACKEND src/audio_usb.c)
+else()
+	set(AUDIO_BACKEND src/audio_i2s.c)
+endif()
+
 add_custom_target(version ALL
 	COMMAND	${CMAKE_COMMAND}
 			-D SRC=${CMAKE_CURRENT_LIST_DIR}
@@ -99,7 +109,7 @@ add_custom_target(version ALL
 add_executable(${PROJECT}
 	src/main.cxx
 	src/usb_descriptors.c
-	src/audio_i2s.c
+	${AUDIO_BACKEND}
 	src/engine.cxx
 	src/voice.cxx
 	src/channel.cxx
@@ -136,6 +146,7 @@ target_compile_definitions(${PROJECT} PRIVATE
 	CONFIG_SAMPLE_RATE=${CONFIG_SAMPLE_RATE}
 	CONFIG_BUFFER_SIZE=${CONFIG_BUFFER_SIZE}
 	CONFIG_WAVE_SHIFT=${CONFIG_WAVE_SHIFT}
+	CONFIG_AUDIO_USB=${CONFIG_AUDIO_USB}
 	CONFIG_LCD_ACTIVE=${CONFIG_LCD_ACTIVE}
 	CONFIG_HW_PICOADK=${CONFIG_HW_PICOADK}
 	CONFIG_HW_PIMORONI_AUDIO=${CONFIG_HW_PIMORONI_AUDIO}

@@ -24,6 +24,7 @@
  */
 
 #include "tusb.h"
+#include "usb_audio_desc.h"
 #if __has_include("bsp/board_api.h")
 #include "bsp/board_api.h"
 #else
@@ -51,9 +52,23 @@ tusb_desc_device_t const desc_device =
     .bDescriptorType    = TUSB_DESC_DEVICE,
 
     .bcdUSB             = 0x0200,
+
+#if CFG_TUD_AUDIO
+    // With the audio function present the device is composite and uses
+    // an Interface Association Descriptor to group the audio control
+    // and streaming interfaces.  A host only looks for IADs when the
+    // device declares itself Miscellaneous / Common Class / IAD, so
+    // leaving these at zero enumerates fine but the audio function is
+    // never assembled - the device appears, and no audio device does.
+    .bDeviceClass       = TUSB_CLASS_MISC,
+    .bDeviceSubClass    = MISC_SUBCLASS_COMMON,
+    .bDeviceProtocol    = MISC_PROTOCOL_IAD,
+#else
+    // MIDI alone needs no IAD, so the class stays per-interface
     .bDeviceClass       = 0,
     .bDeviceSubClass    = 0,
     .bDeviceProtocol    = 0,
+#endif
 
     .bMaxPacketSize0    = CFG_TUD_ENDPOINT0_SIZE,
     .idVendor           = 0xCafe,
@@ -81,15 +96,26 @@ uint8_t const * tud_descriptor_device_cb(void)
 
 #define EPNUM_MIDI_OUT    0x01
 #define EPNUM_MIDI_IN     0x81
+#define EPNUM_AUDIO_IN    0x82
 
 enum
 {
   ITF_NUM_MIDI = 0,
   ITF_NUM_MIDI_STREAMING,
+#if CFG_TUD_AUDIO
+  ITF_NUM_AUDIO_CONTROL,
+  ITF_NUM_AUDIO_STREAMING,
+#endif
   ITF_NUM_TOTAL
 };
 
-#define CONFIG_TOTAL_LEN  (TUD_CONFIG_DESC_LEN + TUD_MIDI_DESC_LEN)
+#if CFG_TUD_AUDIO
+#define AUDIO_DESC_LEN    CFG_TUD_AUDIO_FUNC_1_DESC_LEN
+#else
+#define AUDIO_DESC_LEN    0
+#endif
+
+#define CONFIG_TOTAL_LEN  (TUD_CONFIG_DESC_LEN + TUD_MIDI_DESC_LEN + AUDIO_DESC_LEN)
 
 uint8_t const desc_configuration[] =
 {
@@ -98,6 +124,12 @@ uint8_t const desc_configuration[] =
 
   // Interface number, string index, EP Out & EP In address, EP size
   TUD_MIDI_DESCRIPTOR(ITF_NUM_MIDI, 0, EPNUM_MIDI_OUT, EPNUM_MIDI_IN, TUD_OPT_HIGH_SPEED ? 512 : 64),
+
+#if CFG_TUD_AUDIO
+  // Interface number, string index, bytes per sample, bits used, EP In, EP size
+  TUD_AUDIO_MIC_TWO_CH_DESCRIPTOR(ITF_NUM_AUDIO_CONTROL, 0, 2, 16,
+      EPNUM_AUDIO_IN, CFG_TUD_AUDIO_EP_SZ_IN),
+#endif
 };
 
 // Invoked when received GET CONFIGURATION DESCRIPTOR

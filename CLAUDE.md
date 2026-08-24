@@ -59,8 +59,19 @@ printing from core 0 instead.
 ## Lookup tables — computed at startup
 
 Every table is built at boot rather than baked into the image, by `tables_init()` in `src/tables.c`
-and `waves_init()` in `src/waves.c`, both called from `main` before anything reads one. They live in
-`.bss`, so they cost RAM and nothing in flash.
+and `waves_init()` in `src/waves.c`, both called from `main`. They live in `.bss`, so they cost RAM
+and nothing in flash.
+
+**No global's constructor may read a table.** `main` calls the initialisers before anything *it*
+does reads one, but C++ static constructors run earlier still, and this document used to claim the
+tables were up "before anything reads one" — which was never true of them. `Channel` derived its
+pan values from `pan_table` in its constructor and, being reached through the global `SynthEngine`,
+got a table of zeros; every channel came up with both sides muted and stayed that way, because
+nothing recomputes them but an incoming CC 10. The result was silence for any MIDI file that never
+sends a pan controller, and correct sound for any that does — which reads as a property of the file.
+The fix is the pattern to copy: table-dependent setup goes in an `init()` that `main` calls after
+`tables_init()`, never in a constructor. Worth remembering that this class of bug did not exist
+while the tables were generated into `.rodata`, so it arrived with the change above and lay latent.
 
 This replaced a pair of NodeJS generators that emitted C at build time. Moving the formulas into C
 costs about **22 ms at boot** and 2 KB of code, and buys 28 KB of flash — but the reason to do it
@@ -102,16 +113,33 @@ All knobs live at the top of `CMakeLists.txt` and reach the code as
 - `CONFIG_SAMPLE_RATE` / `CONFIG_WAVE_SHIFT` / `CONFIG_BUFFER_SIZE` — reach the code as compile
   definitions, which `src/settings.h` derives `WAVE_LEN`, `WAVE_MAX` and the table sizes from
 - `CONFIG_LCD_ACTIVE` — pulls in the Pimoroni Pico Display 2 stack for the benchmark readout
+- `CONFIG_AUDIO_USB` — 0 selects the I2S backend (`src/audio_i2s.c`, the default), 1 the USB audio
+  one (`src/audio_usb.c`). Both present the three calls in `src/audio.h` and nothing else; only one
+  is compiled in
 - `CONFIG_HW_PIMORONI_AUDIO` / `CONFIG_HW_PICOADK` — select I2S pin assignments (and, for PicoADK,
   the GPIO 25 DAC soft-unmute in `audio.c`)
 
 ## Architecture
 
-**Dual-core split.** Core 0 (`main`) runs the TinyUSB device task, LED blink, and the LCD/benchmark
-readout. Core 1 runs `audio_loop()` — the entire synthesis path. The two communicate only through
+**Dual-core split.** Core 0 (`main`) runs the LED blink and the LCD/benchmark readout, and services
+TinyUSB. Core 1 runs `audio_loop()` — the entire synthesis path. The two communicate only through
 two SDK `queue_t`s: `midi_queue` (4-byte USB-MIDI-style packets, core 0 → core 1) and `bench_queue`
 (timing samples, core 1 → core 0). Keep this boundary: anything touching `SynthEngine` state must
 happen on core 1, and anything blocking must stay off it.
+
+**`tud_task()` runs from a timer, not from the main loop** — `usb_pump_cb` in `main.cxx`, every
+250 µs, at IRQ priority 0xc0 so `USBCTRL_IRQ` (0x80) can still preempt it to post the completions it
+is draining. It re-arms from the *end* of the callback, so a long `tud_task()` cannot re-enter
+itself. This is not tidiness: `benchmark_task()` blocks for about **62 ms** in `lcd->update()`,
+which ends in `dma_channel_wait_for_finish_blocking()` pushing 150 KB over SPI, and the USB host
+polls the isochronous audio endpoint every 1 ms. With both in the same loop the endpoint went
+unre-armed through every display refresh and only 550 of each 1000 frames were served — audibly.
+The display now blocks as long as it likes without touching USB, and serial and USB MIDI got more
+responsive for the same reason. Nothing on that path needs thread context.
+
+Note the measuring trap that hid this for a while: core 0 turns the main loop over **670,000 times
+a second**, which says nothing about the worst case. An average loop rate is entirely compatible
+with one 62 ms stall buried in it, and only measuring the longest single trip found it.
 
 That last rule is not stylistic — it was the cause of a hard boot hang on RP2350, and it cost a long
 bisect to find. `audio_task` used to call `take_audio_buffer(ap, true)`, whose blocking path waits
@@ -314,6 +342,59 @@ safe to move back to RP2040 unchanged:
   of overflowing `uint32_t`.
 - `SVF::apply` no longer multiplies in fixed point at all — it is float, and depends on the FPU,
   `vcvtr` and `ssat` besides. See below.
+
+## USB audio output
+
+`CONFIG_AUDIO_USB 1` swaps the I2S backend for a UAC2 **input** device — the host sees the synth as
+it would a microphone — alongside the existing MIDI interface, as one composite device. I2S remains
+the default. `src/usb_audio_desc.h` hand-assembles a two-channel descriptor, because TinyUSB ships
+one-channel and four-channel macros and nothing between.
+
+Four things that each cost real time to find, all of which look like something else:
+
+**A composite device with an IAD must declare `0xEF / 0x02 / 0x01`.** Leave `bDeviceClass` at 0 and
+the host never assembles the audio function: the device enumerates perfectly and no audio device
+ever appears.
+
+**Every control the descriptor declares will be queried, and an unanswered query stalls.** Same
+symptom again — clean enumeration, no audio device. `tud_audio_get_req_entity_cb` has to answer
+sample frequency (CUR and RANGE) and clock validity, and the feature unit's mute.
+
+**The isochronous endpoint has to be torn down by hand.** This one is a genuine gap on RP2350.
+`TUP_DCD_EDPT_ISO_ALLOC` is defined there, which compiles the `usbd_edpt_close()` out of the audio
+driver's own close path, and the only code that ever writes `buffer_control` back to zero is
+`hw_endpoint_init()` — which `dcd_edpt_iso_activate()` does not call. So a buffer left armed and
+unconsumed keeps its `AVAIL` bit set for good, and the next time the host selects the streaming
+alternate setting the driver primes the endpoint again and the dcd panics outright:
+`"ep 82 was already available"`. `tud_audio_set_itf_close_EP_cb` in `audio_usb.c` does the EP abort
+the driver does not, and is the fix. Checking `usbd_edpt_busy()` instead does **not** work and was
+tried: usbd clears its own busy flag in `usbd_edpt_iso_activate()` while the hardware stays armed,
+so the software state says idle; and returning false from the pre-load callback aborts
+`audiod_tx_done_cb()` *before* it re-arms, stalling the stream for good.
+
+**Core 1 paces off the clock, never off the consumer.** A DAC always consumes, so the I2S backend
+can block on it; a USB host cannot be relied on to — with nothing listening there is no consumer at
+all. `audio_take()` returns NULL until the next block is due and never blocks, and the ring
+resynchronises if the consumer falls behind. `BUFFER_SIZE` 288 at 48 kHz is exactly six USB frames,
+so a block is consumed in a whole number of callbacks.
+
+## Hard fault reporting
+
+`isr_hardfault` in `main.cxx` captures the exception frame plus a scan of the stack for return
+addresses, stashes it in `.uninitialized_data` (which survives a warm reset), reboots via the
+watchdog, and prints it on the LCD before USB comes up — then halts, so the host cannot provoke the
+same fault again while it is being read. Resolve the addresses with `arm-none-eabi-addr2line -e
+build/PicoSynth.elf -f -C`.
+
+It catches `panic()` and `hard_assert()` as much as bad pointers: both end in a breakpoint, and with
+no debugger attached a breakpoint escalates to HardFault — `hfsr` bit 31 set, `cfsr` zero, which is
+the signature to recognise. Note that the exception frame's `lr` only points back into `panic`
+itself, which is why the stack scan is there; the caller is what identifies the bug.
+
+Keep it. Debugging this board otherwise means inferring from LED states, which took eight rounds of
+wrong guesses on the endpoint panic above — several of them confidently wrong, because a fault and a
+hang look identical from outside and a beacon placed above USB's interrupt priority cannot tell them
+apart. The fault report named the culprit in one reading.
 
 ## Current state (branch `filter-float`)
 
