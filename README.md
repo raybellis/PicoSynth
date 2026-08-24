@@ -8,20 +8,34 @@ NB: this is very much a work in progress!
 
 ## Current Features
 
-- 64 voices (was 128 before the per-voice filter was added)
+- 64 voices
 - 16 channel multi-timbral
 - four hard-coded presets
-- 16-bit stereo I2S audio at 44.1kHz 
+- 16-bit stereo audio at 48kHz, over either I2S or USB
 - wavetable DCOs (2048 x 16-bit samples) using the RP2350 interpolator
 - DCO modulation:
   - LFO (per voice)
   - ADSR pitch envelope
   - pitch bend
+- resonant state-variable filter, per voice, offset by CC 74 and CC 71
 - DCA
   - ADSR envelope
   - stereo pan
 - USB MIDI device
 - Serial MIDI (UART1, pins 4/5)
+
+## Audio output
+
+`CONFIG_AUDIO_USB` in `CMakeLists.txt` selects the transport:
+
+- **0** (default) — 16-bit stereo I2S, as configured for the Pimoroni
+  Audio Pack
+- **1** — USB audio.  The synth appears to the host as a stereo 48kHz
+  recording device, alongside its MIDI interface, so it can be recorded
+  or monitored over the same cable that carries the notes.  No DAC
+  needed
+
+Only one is compiled in.
 
 ## Hardware
 
@@ -45,9 +59,8 @@ Familiarity with using the Pico SDK is assumed.
 My own development system is macOS and I use the arm-none-eabi-gcc
 compiler v13.2.0 from MacPorts.
 
-Building the code requires the following repositories, as well as an
-installation of NodeJS which is used to construct the various lookup
-tables used by the code:
+Building the code requires only the Pico SDK toolchain and the following
+repositories:
 
 - Pico SDK (https://github.com/raspberrypi/pico-sdk.git)
 - Pico Extras (https://github.com/raspberrypi/pico-extras.git)
