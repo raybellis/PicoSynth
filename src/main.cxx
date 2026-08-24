@@ -394,6 +394,11 @@ int main() {
 	tables_init();
 	waves_init();
 
+	// and only now can the engine set its channel defaults: Channel's
+	// pan values come out of pan_table, and this object is a global, so
+	// its constructor ran long before the tables existed
+	engine.init();
+
 	// so the build is identifiable over the UART too, not only on a
 	// display that may not be fitted
 	printf("PicoSynth %s\n", GIT_VERSION);

@@ -53,6 +53,19 @@ static inline uint8_t cc_offset(uint8_t base, uint8_t cc)
 
 SynthEngine::SynthEngine()
 {
+	// nothing here on purpose - this is a global, so it is constructed
+	// before main() has had a chance to call tables_init().  See init()
+}
+
+// Call once the lookup tables exist.  Channel::init() reads pan_table,
+// which is computed at boot rather than baked into flash, so it cannot
+// run any earlier
+void SynthEngine::init()
+{
+	for (auto& c : channel) {
+		c.init();
+	}
+
 	// set all channels to a default preset
 	for (uint8_t c = 0; c < 16; ++c) {
 		midi_in(0xc0 + c, c, 0);

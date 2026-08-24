@@ -5,8 +5,25 @@
 #include "data.h"
 #include "midi.h"
 
+// Deliberately does not set the derived values - see init().
+//
+// Channels are reached through a global SynthEngine, so this runs during
+// static initialisation, before main() calls tables_init().  pan_table is
+// still all zeros at that point, so setting the defaults here left
+// pan_l = pan_r = 0 on every channel, permanently: the only thing that
+// recomputes them is an incoming CC 10.
+//
+// The effect was that any MIDI file which never sends a pan controller
+// played in complete silence, while one that does sounded fine - which
+// made it look like a property of the file rather than a bug.  It is a
+// regression from computing the tables at boot: when they were generated
+// into .rodata they were valid this early.
 Channel::Channel() :
 	control{0, }
+{
+}
+
+void Channel::init()
 {
 	set_cc(volume, 127);
 	set_cc(pan, 64);

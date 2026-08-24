@@ -7,6 +7,10 @@ class Channel {
 	friend class			SynthEngine;
 
 private:
+	// applies the power-on defaults.  Separate from the constructor
+	// because it reads tables that do not exist until tables_init()
+	void					init();
+
 	void					set_program(uint8_t program);
 	void					set_cc(uint8_t cc, uint8_t value);
 	void					set_bend(uint8_t lsb, uint8_t msb);
