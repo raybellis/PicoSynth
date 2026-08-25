@@ -1,9 +1,55 @@
+#include <cstring>
+
 #include "hardware/interp.h"
 
 #include "voice.h"
 #include "data.h"
+#include "dsp.h"
 #include "envelope.h"
+#include "midi.h"
 #include "waves.h"
+
+//--------------------------------------------------------------------+
+// Utility functions
+//--------------------------------------------------------------------+
+
+// x is a (14-bit signed) offset into the power table which contains
+// 1:15 fixed-point log2 multipliers for x = 0.500 ..< 2.000
+static inline void frequency_modulate(uint32_t& step, int16_t x)
+{
+	// power_table holds 2^(r/8192) as 1:15 for one octave, r in
+	// [0, 8192).  the octave below is the same entries read as 1:16 -
+	// that is, with this shift left omitted - because table[x + 8192]
+	// is by definition 65536 * 2^(x/8192) when x is negative.  exact,
+	// not an approximation, and it is what lets the table be half the
+	// size the +/- range would otherwise need
+	uint32_t mul = (x < 0)
+		? power_table[(x + 8192) >> POWER_SHIFT]		// 1:16, [0.5, 1)
+		: power_table[x >> POWER_SHIFT] << 1;			// 1:16, [1, 2)
+
+	// the product needs 48 bits.  this used to be split into 16-bit
+	// halves and reassembled, because ARMv6-M has no 32x32->64
+	// multiply; the M33 does, so one umull covers it.  the result is
+	// bit identical - the old form was exactly this sum
+	step = ((uint64_t)step * mul) >> 16;
+}
+
+// combines a 7-bit patch parameter with its controller, which offsets
+// it either side of centre, and holds the result in range
+static inline uint8_t cc_offset(uint8_t base, uint8_t cc)
+{
+	int16_t v = (int16_t)base + cc - 64;
+
+	if (v < 0) return 0;
+	if (v > 127) return 127;
+
+	return v;
+}
+
+// one buffer of mono samples, and the wider accumulator the oscillator
+// mix needs before it is scaled back into it
+static int16_t				mono[BUFFER_SIZE];
+static int32_t				acc[BUFFER_SIZE];
 
 //--------------------------------------------------------------------+
 // Per-voice state
@@ -27,22 +73,238 @@ Voice::Voice()
 	init();
 }
 
-// runs from RAM - this is the per-sample oscillator loop, called
-// for every active voice on every buffer
-void __not_in_flash_func(Voice::update)(int16_t* samples, size_t n)
+// runs from RAM - this is the per-sample oscillator loop, called for
+// every active voice on every buffer.
+//
+// Each oscillator is scaled by its own 7-bit level and the three are
+// summed, so one at full level comes out at 32511 - full scale to
+// within 0.07 dB - and three at full level reach three times that and
+// saturate.  That is the conventional arrangement: levels are
+// independent, and a patch that wants all three loud turns them down.
+//
+// An oscillator at zero level is skipped rather than multiplied by
+// nothing, which is what keeps a one-oscillator patch costing about
+// what it did before there were three.  A single active oscillator
+// avoids the wide accumulator altogether and scales as it goes.
+void __not_in_flash_func(Voice::oscillators)(int16_t* out, size_t n)
 {
-	// copy voice state to the interpolator
-	interp0->base[0] = dco_step;
-	interp0->base[2] = (uint32_t)waves[patch->dco_wave];
-	interp0->accum[0] = dco_pos;
+	// hand one oscillator's phase to an interpolator and take it back.
+	// Both are configured once per buffer by SynthEngine::update, so
+	// this is only the three registers that differ per oscillator
+	auto load = [this](interp_hw_t* in, int d) {
+		in->base[0]  = dco_step[d];
+		in->base[2]  = (uint32_t)waves[patch->dco[d].wave];
+		in->accum[0] = dco_pos[d];
+	};
 
-	// generate the samples
-	for (uint i = 0; i < n; ++i) {
-		samples[i] = *(int16_t*)interp0->pop[2];
+	auto save = [this](interp_hw_t* in, int d) {
+		dco_pos[d] = in->accum[0] & (WAVE_MAX - 1);
+	};
+
+	int active = 0;
+
+	for (int d = 0; d < NDCO; ++d) {
+		if (patch->dco[d].level) ++active;
 	}
 
-	// update voice state
-	dco_pos = interp0->accum[0] & (WAVE_MAX - 1);
+	if (active == 0) {
+		memset(out, 0, n * sizeof(int16_t));
+		return;
+	}
+
+	// which oscillators are live, in order
+	int idx[NDCO];
+	int k = 0;
+	for (int d = 0; d < NDCO; ++d) {
+		if (patch->dco[d].level) idx[k++] = d;
+	}
+
+	if (active == 1) {
+		const Osc& o = patch->dco[idx[0]];
+
+		load(interp0, idx[0]);
+
+		for (size_t i = 0; i < n; ++i) {
+			out[i] = (int16_t)((*(int16_t*)interp0->pop[2] * o.level) >> 7);
+		}
+
+		save(interp0, idx[0]);
+		return;
+	}
+
+	// Two oscillators share one pass, one interpolator each.  Splitting
+	// them across two passes would mean writing the first to memory and
+	// reading it back to add the second - a read-modify-write per sample
+	// that buys nothing, since the second interpolator is sitting idle.
+	const Osc& a = patch->dco[idx[0]];
+	const Osc& b = patch->dco[idx[1]];
+
+	load(interp0, idx[0]);
+	load(interp1, idx[1]);
+
+	if (active == 2) {
+		// and with only two, the scaling folds into the same pass and
+		// the wide accumulator is never touched at all
+		for (size_t i = 0; i < n; ++i) {
+			int32_t s = *(int16_t*)interp0->pop[2] * a.level
+			          + *(int16_t*)interp1->pop[2] * b.level;
+			out[i] = (int16_t)clamp16(s >> 7);
+		}
+
+		save(interp0, idx[0]);
+		save(interp1, idx[1]);
+		return;
+	}
+
+	for (size_t i = 0; i < n; ++i) {
+		acc[i] = *(int16_t*)interp0->pop[2] * a.level
+		       + *(int16_t*)interp1->pop[2] * b.level;
+	}
+
+	save(interp0, idx[0]);
+	save(interp1, idx[1]);
+
+	// the third reads that back once, and scales on the way out, so
+	// there is still only one pass that touches acc[] twice
+	const Osc& c = patch->dco[idx[2]];
+
+	load(interp0, idx[2]);
+
+	for (size_t i = 0; i < n; ++i) {
+		int32_t s = acc[i] + *(int16_t*)interp0->pop[2] * c.level;
+
+		// saturate rather than wrap, so an overdriven mix flattens
+		// instead of inverting - the same reasoning as the filter output
+		out[i] = (int16_t)clamp16(s >> 7);
+	}
+
+	save(interp0, idx[2]);
+}
+
+// One voice, one buffer, accumulated into the stereo output.
+//
+// Runs from RAM, and everything per-voice happens here: the DCA chain,
+// the pitch modulation, the oscillators, the filter.  The engine's job
+// is to decide *which* voices exist, not how they sound.
+void __not_in_flash_func(Voice::render)(int32_t* samples, size_t n)
+{
+	auto& chan = *channel;
+	auto& p = *patch;
+
+	// the chain is 15 + 7 + 7 + 7 + 7 + 7 = 50 bits.  the 32-bit form
+	// had to shift twice partway through to stay in range, losing 11
+	// bits, and still finished within 1% of overflowing uint32_t on the
+	// last multiply.  the M33 carries all 50 bits, so the final shift
+	// is the only rounding left
+
+	// get the 15-bit DCA current envelope level
+	uint64_t dca = dca_env->level();			// 15 bits
+
+	// scale the DCA by the patch's 7-bit DCA master level
+	dca *= p.dca_env_level;						// 22 bits
+
+	// scale the DCA by the 7-bit note velocity
+	dca *= vel;									// 29 bits
+
+	// scale the DCA by the 7-bit channel volume
+	dca *= chan.control[volume];				// 36 bits
+
+	// and by expression, which is the other half of MIDI volume - CC 7
+	// is the mix setting, CC 11 is what a part is played with, and a
+	// score's dynamics live in this one
+	dca *= chan.control[expression];			// 43 bits
+
+	// apply 7-bit pan and scale back to 16 bits
+	uint16_t level_l = (dca * chan.pan_l) >> 34;	// 50 - 34
+	uint16_t level_r = (dca * chan.pan_r) >> 34;
+
+	// the pitch modulation is common to all three oscillators - what
+	// differs between them is their tuning, and that is already baked
+	// into dco_step_base by note_on()
+	int16_t bend = chan.bend ? chan.bend_f : 0;
+
+	// apply the DCO envelope.  frequency_modulate takes a 14-bit signed
+	// value in which 8192 is one octave, so the shift is what decides
+	// how far a full-depth pitch envelope can reach: the envelope peaks
+	// at 0x7fff and the patch level at 127, and 32767 * 127 >> 9 is
+	// 8127, which is that octave to within 0.8%
+	int16_t penv = 0;
+	if (dco_env && p.dco_env_level) {
+		int32_t env = dco_env->level();			// 15 bits
+		env = env * p.dco_env_level;			// 22 bits
+		penv = (int16_t)(env >> 9);				// 14 bits, 8192/octave
+	}
+
+	// update and apply the LFO
+	uint8_t wheel = chan.control[modwheel];
+	lfo_step = note_table[p.lfo_freq];
+	lfo_pos = (lfo_pos + lfo_step) & (WAVE_MAX - 1);
+
+	int16_t lfo = 0;
+	if (wheel && p.lfo_depth) {
+		int16_t* lfo_wave = waves[p.lfo_wave];
+		int32_t amount = lfo_wave[lfo_pos >> 16];	// 16 bits
+		amount *= p.lfo_depth;						// 23 bits
+		amount *= wheel;							// 30 bits
+		lfo = (int16_t)(amount >> 16);				// 14 bits
+	}
+
+	for (int d = 0; d < NDCO; ++d) {
+		uint32_t step = dco_step_base[d];
+
+		if (bend) frequency_modulate(step, bend);
+		if (penv) frequency_modulate(step, penv);
+		if (lfo)  frequency_modulate(step, lfo);
+
+		dco_step[d] = step;
+	}
+
+	// generate a buffer full of (mono) samples
+	oscillators(mono, n);
+
+	// set the filter from the patch, offset by the channel's two sound
+	// controllers.  this is done per buffer rather than at note-on so
+	// that moving a controller takes effect on notes already sounding
+	//
+	// cutoff_table lands on one of 128 coarse steps; the envelope then
+	// moves it in units of 1/SVF_STEPS of a semitone, which is what
+	// svf_table's sub-semitone resolution exists for - nothing else can
+	// reach between the coarse steps
+	int32_t cutoff = cutoff_table[cc_offset(p.dcf_freq, chan.control[brightness])];
+
+	if (dcf_env) {
+		// depth is centred on 64, so it spans -64 .. +63 semitones
+		int32_t depth = (int32_t)p.dcf_env_level - 64;
+		int32_t env = dcf_env->level();			// 15 bits
+
+		// 64 * 16 * 32767 is 33.5M, so this stays inside int32
+		cutoff += (depth * SVF_STEPS * env) >> 15;
+
+		// set_cutoff clamps the top but takes a uint16_t, so a negative
+		// sweep would wrap to wide open instead of closing
+		if (cutoff < 0) {
+			cutoff = 0;
+		} else if (cutoff > SVF_LEN - 1) {
+			cutoff = SVF_LEN - 1;
+		}
+	}
+
+	filter->set_cutoff(cutoff);
+	filter->set_q(cc_offset(p.dcf_reso, chan.control[resonance]));
+
+	// apply the filter.  this has to happen even while the voice is
+	// inaudible, otherwise its state is stale by the time the level
+	// comes back up, and it clicks
+	filter->apply(mono, n);
+
+	// don't bother accumulating silent voices
+	if (!dca) return;
+
+	// accumulate the samples into the supplied output buffer
+	for (size_t i = 0, j = 0; i < n; ++i) {
+		samples[j++] += (level_l * mono[i]) >> 16;
+		samples[j++] += (level_r * mono[i]) >> 16;
+	}
 }
 
 void Voice::note_on(uint8_t _chan, uint8_t _note, uint8_t _vel)
@@ -72,9 +334,33 @@ void Voice::note_on(uint8_t _chan, uint8_t _note, uint8_t _vel)
 		dcf_env->gate_on();
 	}
 
-	// setup DCO
-	dco_step_base = note_table[note];
-	dco_pos = 0;
+	// set up the oscillators.  coarse and fine are both fixed for the
+	// life of the note, so they are folded into the base step here and
+	// cost nothing per buffer afterwards
+	for (int i = 0; i < NDCO; ++i) {
+		const Osc& o = p.dco[i];
+
+		// coarse shifts the note itself, which is exact - a semitone is
+		// a table entry - and is not limited to the octave either side
+		// that frequency_modulate can reach
+		int32_t n = (int32_t)note + o.coarse;
+		if (n < 0) {
+			n = 0;
+		} else if (n > 127) {
+			n = 127;
+		}
+
+		uint32_t step = note_table[n];
+
+		// fine is in 64ths of a semitone, and frequency_modulate wants
+		// 8192 to the octave, so a 64th of a semitone is 8192/(12*64)
+		if (o.fine) {
+			frequency_modulate(step, (int16_t)((o.fine * 8192) / (12 * 64)));
+		}
+
+		dco_step_base[i] = step;
+		dco_pos[i] = 0;
+	}
 
 	// set up the filter.  its cutoff and resonance aren't set here -
 	// SynthEngine::update does that from the patch and the channel

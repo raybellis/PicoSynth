@@ -2,9 +2,36 @@
 
 #include <stdint.h>
 
+// One of the three oscillators a voice runs.
+//
+// coarse and fine are *signed*, and zero means no offset.  The rest of
+// Patch follows the MIDI convention of a 7-bit value centred on 64, but
+// these are preset-only fields that never arrive over the wire, and the
+// centred form has a nasty property in a POD filled with designated
+// initialisers: the neutral value is not zero, so a preset that omits
+// the field gets a large detune rather than none.  That trap has cost
+// real time here more than once already.
+//
+// They are also applied by different means, because they have to be.
+// coarse shifts the note before the table lookup, which is exact and
+// costs nothing; fine goes through frequency_modulate, which can only
+// reach an octave either way - the whole of power_table - and so could
+// not carry coarse even if it were convenient.
 typedef struct {
 
-	uint8_t				dco_wave;
+	uint8_t				wave;			// index into waves[]
+	uint8_t				level;			// 7-bit, mixed with the others
+
+	int8_t				coarse;			// semitones
+	int8_t				fine;			// 64ths of a semitone
+
+} Osc;
+
+#define NDCO			3
+
+typedef struct {
+
+	Osc					dco[NDCO];
 
 	uint8_t				dca_env_level;
 	uint8_t				dca_env_a;

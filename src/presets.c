@@ -2,7 +2,14 @@
 
 Patch presets[] = {
 	{	// 0
-		.dco_wave		= 2,
+		// all three oscillators: a detuned pair over a sub an
+		// octave down.  the levels total 127, so the mix reaches
+		// full scale without saturating
+		.dco = {
+			{ .wave = 2, .level = 45 },
+			{ .wave = 2, .level = 45, .fine = 4 },
+			{ .wave = 2, .level = 37, .coarse = -12 },
+		},
 
 		.dca_env_level	= 127,
 		.dca_env_a		= 30,
@@ -18,7 +25,14 @@ Patch presets[] = {
 		.lfo_depth		= 20,
 	},
 	{	// 1
-		.dco_wave		= 3,
+		// all three oscillators: a detuned pair over a sub an
+		// octave down.  the levels total 127, so the mix reaches
+		// full scale without saturating
+		.dco = {
+			{ .wave = 3, .level = 45 },
+			{ .wave = 3, .level = 45, .fine = 4 },
+			{ .wave = 3, .level = 37, .coarse = -12 },
+		},
 
 		.dca_env_level	= 100,
 		.dca_env_a		= 30,
@@ -62,7 +76,14 @@ Patch presets[] = {
 		.lfo_depth		= 20,
 	},
 	{	// 2
-		.dco_wave		= 2,
+		// all three oscillators: a detuned pair over a sub an
+		// octave down.  the levels total 127, so the mix reaches
+		// full scale without saturating
+		.dco = {
+			{ .wave = 2, .level = 45 },
+			{ .wave = 2, .level = 45, .fine = 4 },
+			{ .wave = 2, .level = 37, .coarse = -12 },
+		},
 
 		.dca_env_level	= 100,
 		.dca_env_a		= 30,
@@ -78,7 +99,16 @@ Patch presets[] = {
 		.lfo_depth		= 127,
 	},
 	{	// 3
-		.dco_wave		= 3,
+		// the one preset that runs all three oscillators: a pair of saws
+		// detuned by 4/64 of a semitone - about six cents, which beats
+		// slowly rather than sounding out of tune - over a sub an octave
+		// down.  the levels total 127, so the mix reaches full scale
+		// without saturating
+		.dco = {
+			{ .wave = 2, .level = 45 },
+			{ .wave = 2, .level = 45, .fine = 4 },
+			{ .wave = 2, .level = 37, .coarse = -12 },
+		},
 
 		.dca_env_level	= 127,
 		.dca_env_a		= 30,

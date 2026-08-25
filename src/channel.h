@@ -4,7 +4,10 @@
 
 class Channel {
 
+	// SynthEngine sets this state from MIDI; Voice reads it every buffer
+	// while rendering, which is why the synthesis moved to voice.cxx
 	friend class			SynthEngine;
+	friend class			Voice;
 
 private:
 	// applies the power-on defaults.  Separate from the constructor

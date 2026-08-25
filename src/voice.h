@@ -25,9 +25,13 @@ private:
 	uint8_t					note;
 	uint8_t					vel;
 
-	uint32_t				dco_step_base;
-	uint32_t				dco_step;
-	uint32_t				dco_pos;
+	// one set per oscillator.  the base already carries that
+	// oscillator's coarse and fine tuning, both of which are fixed for
+	// the life of the note, so the per-buffer modulation below only has
+	// to deal with what actually moves
+	uint32_t				dco_step_base[NDCO];
+	uint32_t				dco_step[NDCO];
+	uint32_t				dco_pos[NDCO];
 
 	uint32_t				lfo_step;
 	uint32_t				lfo_pos;
@@ -41,7 +45,16 @@ private:
 
 private:
 	void					init();
-	void					update(int16_t* samples, size_t n);
+
+	// renders one buffer of this voice and accumulates it into the
+	// stereo output.  everything per-voice lives here - the DCA chain,
+	// the pitch modulation, the oscillators, the filter - leaving
+	// SynthEngine to manage voices and MIDI rather than to synthesise
+	void					render(int32_t* samples, size_t n);
+
+	// the three oscillators, mixed by their levels into one mono buffer
+	void					oscillators(int16_t* out, size_t n);
+
 	void					note_on(uint8_t chan, uint8_t note, uint8_t vel);
 	void					note_off();
 
