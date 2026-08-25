@@ -70,6 +70,13 @@ uint32_t __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 		}
 	}
 
+	// advance every channel's LFO, whether or not anything is sounding
+	// on it - sixteen adds a buffer, against one per voice for any
+	// patch that uses the global phase
+	for (auto& c : channel) {
+		c.lfo_tick();
+	}
+
 	// set up both interpolators, identically.  a voice runs three
 	// oscillators and each needs its own phase accumulator, so having
 	// two of these is what lets a pair of them share one pass over the
@@ -120,6 +127,30 @@ void SynthEngine::note_off(uint8_t chan, uint8_t note, uint8_t vel)
 	}
 }
 
+// CC 123 lets everything go into its release; CC 120 cuts it dead.
+//
+// Both ignore the sustain pedal, which is the point of them: a file
+// that sends a pedal down and then stops would otherwise ring for good,
+// there being nothing left to lift it.  Releasing mid-iteration is safe
+// - the pool iterator only visits voices in use, and release() marks
+// them free behind it
+void SynthEngine::notes_off(uint8_t chan, bool immediate)
+{
+	Channel* c = &channel[chan];
+
+	for (auto& v: pool) {
+		if (v.channel != c) continue;
+
+		v.sustained = false;
+
+		if (immediate) {
+			pool.release(v);
+		} else {
+			v.note_off();
+		}
+	}
+}
+
 // the pedal has come up: release everything it was holding
 void SynthEngine::sustain_off(uint8_t chan)
 {
@@ -152,10 +183,14 @@ void SynthEngine::midi_in(uint8_t c, uint8_t d1, uint8_t d2)
 		case 0xb:
 			channel[chan].midi_in(c, d1, d2);
 
-			// the channel stores the pedal, but only the engine can see
-			// the voices it was holding
+			// the channel stores these, but only the engine can see the
+			// voices they act on
 			if (d1 == sustain && d2 < 64) {
 				sustain_off(chan);
+			} else if (d1 == all_notes_off) {
+				notes_off(chan, false);
+			} else if (d1 == all_sound_off) {
+				notes_off(chan, true);
 			}
 			break;
 		case 0xc:

@@ -12,17 +12,33 @@ NB: this is very much a work in progress!
 - 16 channel multi-timbral
 - four hard-coded presets
 - 16-bit stereo audio at 48kHz, over either I2S or USB
-- wavetable DCOs (2048 x 16-bit samples) using the RP2350 interpolator
+- three wavetable DCOs per voice (2048 x 16-bit samples), using the
+  RP2350 interpolators, each with its own:
+  - waveform — sine, square, saw or triangle
+  - level
+  - coarse tune, in semitones
+  - fine tune, in 64ths of a semitone
 - DCO modulation:
-  - LFO (per voice)
+  - LFO
   - ADSR pitch envelope
   - pitch bend
-- resonant state-variable filter, per voice, offset by CC 74 and CC 71
+- resonant state-variable filter (DCF), per voice, with:
+  - ADSR envelope, bipolar depth
+  - cutoff and resonance from CC 74 and CC 71
+  - velocity, key tracking and aftertouch
+  - LFO
 - DCA
   - ADSR envelope
+  - velocity, channel volume (CC 7) and expression (CC 11)
+  - LFO, as tremolo
   - stereo pan
+- LFO, per voice or per channel, with a fade-in and depth from the
+  patch, the mod wheel and aftertouch
+- peak-limited output, stereo linked
 - USB MIDI device
 - Serial MIDI (UART1, pins 4/5)
+- sustain pedal (CC 64), all notes off (CC 123) and all sound off
+  (CC 120)
 
 ## Audio output
 

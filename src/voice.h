@@ -36,6 +36,10 @@ private:
 	uint32_t				lfo_step;
 	uint32_t				lfo_pos;
 
+	// how far into its fade-in the LFO is, 0x7fff being full depth.
+	// reset per note, so the delay starts again with each one
+	uint16_t				lfo_ramp;
+
 	Channel*				channel;
 	Patch*					patch;
 	Envelope*				dca_env;

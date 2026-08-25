@@ -22,7 +22,7 @@ Patch presets[] = {
 		.dcf_env_level	= 64,			// no filter envelope
 
 		.lfo_freq		= 64,
-		.lfo_depth		= 20,
+		.lfo_wheel		= 20,
 	},
 	{	// 1
 		// all three oscillators: a detuned pair over a sub an
@@ -59,6 +59,14 @@ Patch presets[] = {
 		// gentle tone change rather than a filter moving
 		.dcf_reso		= 96,
 
+		// how the filter answers the keyboard.  velocity is the one to
+		// feel: play softly and the note is dark, lean on it and it
+		// opens two octaves.  key tracking is measured from middle C,
+		// at half a semitone of cutoff per semitone played, so the top
+		// of the keyboard stays bright without the bottom going thin
+		.dcf_vel		= 24,
+		.dcf_track		= 64,
+
 		// the one preset that uses the filter envelope, so there is
 		// something to hear it on.  opens 32 semitones above the patch
 		// cutoff and settles about 10 above it.
@@ -73,7 +81,7 @@ Patch presets[] = {
 		.dcf_env_r		= 20,
 
 		.lfo_freq		= 92,
-		.lfo_depth		= 20,
+		.lfo_wheel		= 20,
 	},
 	{	// 2
 		// all three oscillators: a detuned pair over a sub an
@@ -95,8 +103,17 @@ Patch presets[] = {
 		.dcf_reso		= 64,
 		.dcf_env_level	= 64,			// no filter envelope
 
-		.lfo_freq		= 64,
-		.lfo_depth		= 127,
+		// vibrato, and the demonstration of what the channel LFO is
+		// for: one phase shared by every note, arriving 1.8 s after the
+		// note rather than with it.  hold a chord and it swells in
+		// together, which is what the per-voice phase cannot do - there
+		// each note wobbles on its own and the result is a chorus
+		.lfo_freq		= 92,			// 5.8 Hz
+		.lfo_global		= 1,
+		.lfo_delay		= 100,			// 1.8 s to full depth
+		.lfo_depth		= 5,			// just under half a semitone
+		.lfo_wheel		= 127,			// and the wheel adds an octave
+		.lfo_press		= 90,			// as does leaning on the key
 	},
 	{	// 3
 		// the one preset that runs all three oscillators: a pair of saws
@@ -120,8 +137,14 @@ Patch presets[] = {
 		.dcf_reso		= 64,
 		.dcf_env_level	= 64,			// no filter envelope
 
-		.lfo_wave		= 1,
+		// the LFO's other two destinations, on a preset of their own so
+		// they are not competing with vibrato to be heard.  a sine
+		// rather than the square this used to run, since both of these
+		// want to sweep rather than chop
+		.lfo_wave		= 0,
+		.lfo_dca		= 90,			// tremolo
+		.lfo_dcf		= 12,			// and a wah either side of it
 		.lfo_freq		= 96,
-		.lfo_depth		= 31,
+		.lfo_wheel		= 31,
 	},
 };

@@ -235,18 +235,57 @@ void __not_in_flash_func(Voice::render)(int32_t* samples, size_t n)
 		penv = (int16_t)(env >> 9);				// 14 bits, 8192/octave
 	}
 
-	// update and apply the LFO
-	uint8_t wheel = chan.control[modwheel];
+	// --- the LFO ----------------------------------------------------
+	//
+	// The per-voice phase advances whether or not this patch uses it,
+	// so that a voice which does is never in step with the last note
+	// that used the same slot - that arbitrariness is the point, and is
+	// what makes the per-voice mode sound like an ensemble rather than
+	// one instrument.  lfo_global picks the channel's phase instead,
+	// which all its notes share, and reads as vibrato.
 	lfo_step = note_table[p.lfo_freq];
 	lfo_pos = (lfo_pos + lfo_step) & (WAVE_MAX - 1);
 
-	int16_t lfo = 0;
-	if (wheel && p.lfo_depth) {
-		int16_t* lfo_wave = waves[p.lfo_wave];
-		int32_t amount = lfo_wave[lfo_pos >> 16];	// 16 bits
-		amount *= p.lfo_depth;						// 23 bits
-		amount *= wheel;							// 30 bits
-		lfo = (int16_t)(amount >> 16);				// 14 bits
+	uint32_t phase = p.lfo_global ? chan.lfo_pos : lfo_pos;
+
+	// the fade-in, applied to the LFO itself rather than to each of its
+	// depths, so every destination arrives together
+	if (lfo_ramp < 0x7fff) {
+		int32_t r = p.lfo_delay
+			? lfo_ramp + (128 - p.lfo_delay) * 4
+			: 0x7fff;
+
+		lfo_ramp = (uint16_t)((r > 0x7fff) ? 0x7fff : r);
+	}
+
+	int32_t lfo_raw = waves[p.lfo_wave][phase >> 16];		// 16 bits
+	lfo_raw = (lfo_raw * lfo_ramp) >> 15;
+
+	// depth to pitch is the sum of what the patch asks for and what the
+	// two controllers add, capped where the table runs out
+	int32_t depth = p.lfo_depth
+		+ ((p.lfo_wheel * chan.control[modwheel]) >> 7)
+		+ ((p.lfo_press * chan.pressure) >> 7);
+
+	if (depth > 127) {
+		depth = 127;
+	}
+
+	// 32767 * 127 >> 9 is 8127, an octave to within 0.8% - the same
+	// reduction the DCO envelope makes, and for the same reason
+	int16_t lfo = (int16_t)((lfo_raw * depth) >> 9);
+
+	// Tremolo ducks from unity rather than modulating around it, so the
+	// gain can never exceed 1 and nothing downstream has to keep room
+	// for it.  It also has to be applied here, to the levels, rather
+	// than folded into the DCA chain - that is already 50 bits, and one
+	// more 15-bit stage would put it past what a uint64_t holds
+	if (p.lfo_dca) {
+		int32_t duck = (((32767 - lfo_raw) >> 1) * p.lfo_dca) >> 7;
+		int32_t trem = 32767 - duck;
+
+		level_l = (uint16_t)(((int32_t)level_l * trem) >> 15);
+		level_r = (uint16_t)(((int32_t)level_r * trem) >> 15);
 	}
 
 	for (int d = 0; d < NDCO; ++d) {
@@ -272,21 +311,42 @@ void __not_in_flash_func(Voice::render)(int32_t* samples, size_t n)
 	// reach between the coarse steps
 	int32_t cutoff = cutoff_table[cc_offset(p.dcf_freq, chan.control[brightness])];
 
+	// everything else that moves the cutoff, all in fine steps of
+	// 1/SVF_STEPS of a semitone.  key tracking is measured from note 60
+	// so that dcf_freq stays the cutoff at middle C whatever it is set
+	// to, and 127 means the cutoff follows the keyboard one for one
+	if (p.dcf_track) {
+		cutoff += (((int32_t)note - 60) * SVF_STEPS * p.dcf_track) / 127;
+	}
+
+	if (p.dcf_vel) {
+		cutoff += ((int32_t)p.dcf_vel * SVF_STEPS * vel) / 127;
+	}
+
+	if (p.dcf_press) {
+		cutoff += ((int32_t)p.dcf_press * SVF_STEPS * chan.pressure) / 127;
+	}
+
+	if (p.lfo_dcf) {
+		cutoff += (lfo_raw * p.lfo_dcf * SVF_STEPS) >> 15;
+	}
+
 	if (dcf_env) {
 		// depth is centred on 64, so it spans -64 .. +63 semitones
-		int32_t depth = (int32_t)p.dcf_env_level - 64;
+		int32_t env_depth = (int32_t)p.dcf_env_level - 64;
 		int32_t env = dcf_env->level();			// 15 bits
 
 		// 64 * 16 * 32767 is 33.5M, so this stays inside int32
-		cutoff += (depth * SVF_STEPS * env) >> 15;
+		cutoff += (env_depth * SVF_STEPS * env) >> 15;
+	}
 
-		// set_cutoff clamps the top but takes a uint16_t, so a negative
-		// sweep would wrap to wide open instead of closing
-		if (cutoff < 0) {
-			cutoff = 0;
-		} else if (cutoff > SVF_LEN - 1) {
-			cutoff = SVF_LEN - 1;
-		}
+	// clamped once, after everything that moves it.  set_cutoff clamps
+	// the top but takes a uint16_t, so anything that drove this negative
+	// would wrap to wide open instead of closing
+	if (cutoff < 0) {
+		cutoff = 0;
+	} else if (cutoff > SVF_LEN - 1) {
+		cutoff = SVF_LEN - 1;
 	}
 
 	filter->set_cutoff(cutoff);
@@ -313,6 +373,10 @@ void Voice::note_on(uint8_t _chan, uint8_t _note, uint8_t _vel)
 	// remember note parameters
 	note = _note;
 	vel = _vel;
+
+	// the LFO fade-in restarts with the note.  its *phase* deliberately
+	// does not - see render()
+	lfo_ramp = 0;
 
 	// load the current patch parameters
 	auto& p = *patch;

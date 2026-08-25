@@ -4,6 +4,7 @@
 #include "channel.h"
 #include "data.h"
 #include "midi.h"
+#include "patch.h"			// presets[], for the channel LFO rate
 
 // Deliberately does not set the derived values - see init().
 //
@@ -25,6 +26,9 @@ Channel::Channel() :
 
 void Channel::init()
 {
+	lfo_pos = 0;
+	pressure = 0;
+
 	set_cc(volume, 127);
 	set_cc(pan, 64);
 
@@ -44,6 +48,14 @@ void Channel::init()
 void Channel::set_program(uint8_t n)
 {
 	program = n;
+}
+
+// One tick per buffer, for every channel whether or not it is sounding
+// - sixteen adds, against the per-voice work this replaces for any
+// patch that asks for the global phase
+void Channel::lfo_tick()
+{
+	lfo_pos = (lfo_pos + note_table[presets[program % 4].lfo_freq]) & (WAVE_MAX - 1);
 }
 
 void Channel::set_cc(uint8_t cc, uint8_t v)
