@@ -123,10 +123,10 @@ uint32_t __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 		// and a reference to the current note's patch
 		auto& p = *v.patch;
 
-		// the chain is 15 + 7 + 7 + 7 + 7 = 43 bits.  the 32-bit form
-		// had to shift twice partway through to stay in range, losing
-		// 11 bits, and still finished within 1% of overflowing
-		// uint32_t on the last multiply.  the M33 carries all 43 bits,
+		// the chain is 15 + 7 + 7 + 7 + 7 + 7 = 50 bits.  the 32-bit
+		// form had to shift twice partway through to stay in range,
+		// losing 11 bits, and still finished within 1% of overflowing
+		// uint32_t on the last multiply.  the M33 carries all 50 bits,
 		// so the final shift is the only rounding left
 
 		// get the 15-bit DCA current envelope level
@@ -141,9 +141,14 @@ uint32_t __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 		// scale the DCA by the 7-bit channel volume
 		dca *= chan.control[volume];			// 36 bits
 
+		// and by expression, which is the other half of MIDI volume -
+		// CC 7 is the mix setting, CC 11 is what a part is played with,
+		// and a score's dynamics live in this one
+		dca *= chan.control[expression];		// 43 bits
+
 		// apply 7-bit pan and scale back to 16 bits
-		uint16_t level_l = (dca * chan.pan_l) >> 27;	// 43 - 27
-		uint16_t level_r = (dca * chan.pan_r) >> 27;
+		uint16_t level_l = (dca * chan.pan_l) >> 34;	// 50 - 34
+		uint16_t level_r = (dca * chan.pan_r) >> 34;
 
 		// scale the DCO step by the current pitchbend amount
 		v.dco_step = v.dco_step_base;
@@ -236,11 +241,34 @@ void SynthEngine::note_on(uint8_t chan, uint8_t note, uint8_t vel)
 	}
 }
 
+// With the sustain pedal down the note carries on sounding and the
+// release is owed until the pedal comes up, which is what a piano does
+// and what any pedalled part is written expecting.  The note is marked
+// rather than released; sustain_off() below settles the debt.
 void SynthEngine::note_off(uint8_t chan, uint8_t note, uint8_t vel)
 {
 	Channel* c = &channel[chan];
+	bool pedal = c->control[sustain] >= 64;
+
 	for (auto& v: pool) {
 		if (v.channel == c && v.note == note) {
+			if (pedal) {
+				v.sustained = true;
+			} else {
+				v.note_off();
+			}
+		}
+	}
+}
+
+// the pedal has come up: release everything it was holding
+void SynthEngine::sustain_off(uint8_t chan)
+{
+	Channel* c = &channel[chan];
+
+	for (auto& v: pool) {
+		if (v.channel == c && v.sustained) {
+			v.sustained = false;
 			v.note_off();
 		}
 	}
@@ -263,6 +291,14 @@ void SynthEngine::midi_in(uint8_t c, uint8_t d1, uint8_t d2)
 			}
 			break;
 		case 0xb:
+			channel[chan].midi_in(c, d1, d2);
+
+			// the channel stores the pedal, but only the engine can see
+			// the voices it was holding
+			if (d1 == sustain && d2 < 64) {
+				sustain_off(chan);
+			}
+			break;
 		case 0xc:
 		case 0xd:
 		case 0xe:

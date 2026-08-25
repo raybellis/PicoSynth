@@ -28,6 +28,11 @@ void Channel::init()
 	set_cc(volume, 127);
 	set_cc(pan, 64);
 
+	// expression multiplies volume in the DCA chain, so left at its
+	// zero-initialised value it would silence the channel outright -
+	// 127 is both the MIDI default and the only safe one
+	set_cc(expression, 127);
+
 	// these two offset the patch either side of centre, so they have
 	// to start centred - left at zero they would close every filter
 	set_cc(brightness, 64);

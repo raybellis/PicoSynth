@@ -17,6 +17,11 @@ class Voice {
 private:
 	bool					free;
 	bool					steal;
+
+	// note-off arrived while the sustain pedal was down, so the note is
+	// still sounding and owes a release when the pedal comes up
+	bool					sustained;
+
 	uint8_t					note;
 	uint8_t					vel;
 

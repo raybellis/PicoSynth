@@ -15,6 +15,7 @@ private:
 private:
 	void					note_on(uint8_t chan, uint8_t note, uint8_t vel);
 	void					note_off(uint8_t chan, uint8_t note, uint8_t vel);
+	void					sustain_off(uint8_t chan);
 
 public:
 	// must be called after tables_init(), and before any MIDI arrives

@@ -13,6 +13,7 @@ void Voice::init()
 {
 	free = true;
 	steal = false;
+	sustained = false;
 	channel = nullptr;
 	patch = nullptr;
 	dca_env = nullptr;
