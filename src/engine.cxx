@@ -155,14 +155,19 @@ uint32_t __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 		if (chan.bend) {
 			frequency_modulate(v.dco_step, chan.bend_f);
 		}
-		// apply the DCO envelope
+		// apply the DCO envelope.  frequency_modulate takes a 14-bit
+		// signed value in which 8192 is one octave, so the shift is what
+		// decides how far a full-depth pitch envelope can reach: the
+		// envelope peaks at 0x7fff and the patch level at 127, and
+		// 32767 * 127 >> 9 is 8127, which is that octave to within
+		// 0.8%.  It was >> 10, which reached 4063 - half an octave -
+		// while the comments alongside claimed 16, 24 and 14 bits for
+		// values that are actually 15, 22 and 12
 		if (v.dco_env && p.dco_env_level) {
-			int32_t env = v.dco_env->level();	// 16 bits
-			if (true || env) {
-				env = env * p.dco_env_level;	// 24 bits
-				env >>= 10;						// 14 bits
-				frequency_modulate(v.dco_step, env);
-			}
+			int32_t env = v.dco_env->level();	// 15 bits
+			env = env * p.dco_env_level;		// 22 bits
+			env >>= 9;							// 14 bits, 8192/octave
+			frequency_modulate(v.dco_step, env);
 		}
 
 		// update and apply the LFO
