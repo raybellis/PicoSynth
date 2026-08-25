@@ -166,8 +166,14 @@ and `Channel channel[16]`.
 A `Voice` points at (never owns) a `Channel` and a `Patch`, and owns its `Envelope`s and `Filter`.
 `Channel` holds MIDI-visible state (CC array, program, bend) plus derived values (`bend_f`,
 `pan_l/pan_r`) recomputed on change so the audio loop only does lookups. `Patch` is a flat POD of
-7-bit parameters; the four presets in `src/presets.c` are hard-coded and program change selects
-`presets[program % 4]`.
+7-bit parameters; the 128 presets in `src/presets.c` are hard-coded and program change selects
+`presets[program % NPRESETS]` — in **two** places, the engine and `Channel::lfo_tick`, so both move
+together.
+
+**`presets` is `const`, and that is not cosmetic.** 128 patches at 41 bytes is 5 KB, and a
+non-`const` array lands in `.data`, which costs that much RAM *and* the same again in flash for the
+initialiser. It belongs in `.rodata`; `Voice::patch` is a `const Patch*` to keep it there. This is
+the same rule as the lookup tables, pointing the other way — see the table above.
 
 **Zero is not neutral for several `Patch` fields, and that is the most reliable way to break a new
 preset.** `Patch` is a POD filled with designated initialisers, so anything omitted is zero — and
@@ -220,14 +226,23 @@ an ensemble or a chorus; per channel, all its notes share one phase and it reads
 `lfo_global` picks. The channel form is also the cheaper of the two — sixteen adds a buffer in
 `SynthEngine::update`, against one per *voice*.
 
-Depth to pitch sums three sources, capped at 127: the patch's own `lfo_depth`, what the mod wheel
-adds through `lfo_wheel`, and what aftertouch adds through `lfo_press`. The patch's own is the one
-that matters structurally — the depth used to be multiplied by the wheel, so with the wheel down
-there was no LFO at all and a patch could not have vibrato of its own.
+**It is amount-and-routing, not a depth per destination.** `lfo_amount` says how much LFO is
+running, summed from the patch's own base plus what the mod wheel adds through `lfo_wheel` and what
+aftertouch adds through `lfo_press`, capped at 127. That scales the oscillator *itself*, and only
+then do `lfo_pitch`, `lfo_dcf` and `lfo_dca` route it to vibrato, the cutoff and a tremolo.
 
-`lfo_delay` fades the LFO in, and is applied to the LFO **itself** rather than to each depth, so
-every destination arrives together. `lfo_dcf` sweeps the cutoff and `lfo_dca` is a tremolo, each
-with its own depth so a patch can have wah without vibrato or the reverse.
+The ordering is the whole point. Depths used to be per-destination with the wheel added to the
+*pitch* one, which meant a controller could only ever reach the vibrato — a filter sweep or a
+tremolo sat at whatever the patch said with no way to bring it in. Scaling the source instead lets
+the wheel reach all three, which is what the pads do: their sweep opens under the wheel and was
+previously inexpressible. `lfo_delay` already worked this way, fading the LFO itself rather than
+each depth so that every destination arrives together, and the amount now joins it there.
+
+Two consequences worth knowing. `lfo_amount` of zero means no LFO at all regardless of routing, so
+a patch that wants movement must set it — the migration gives it 127 where nothing else says
+otherwise. And because the amount and the routing multiply, the same vibrato can be written many
+ways; prefer a full routing depth with the amount carrying the expression, so the wheel has
+somewhere to travel.
 
 **The tremolo ducks from unity rather than modulating around it**, so the gain can never exceed 1
 and nothing downstream has to keep room for it. It also has to be applied to `level_l`/`level_r`
@@ -492,6 +507,45 @@ safe to move back to RP2040 unchanged:
   `int32`'s 2.1 billion.
 - `SVF::apply` no longer multiplies in fixed point at all — it is float, and depends on the FPU,
   `vcvtr` and `ssat` besides. See below.
+
+## The patch set
+
+`src/presets.c` is a rough General MIDI set, **generated** by `utils/gm_presets.py` and committed.
+That script is deliberately *not* part of the build: the lookup-table generators were retired so
+that nothing but the Pico SDK is needed to compile, and this keeps to that — run it by hand and
+commit what it emits. It earns its place by letting a patch be written musically, cutoff as a MIDI
+note and LFO rate in Hz, and converting on the way out; edit the script rather than the C when a
+whole family needs moving.
+
+**How close any of it gets varies by family, and the limit is the instrument rather than the
+tuning.** Organs, strings, ensembles, brass, basses, reeds, leads and pads are what subtractive
+synthesis is for and come out well. Pianos, guitars and chromatic percussion are recognisable but
+plainly synthetic.
+
+**The hard limit is that there is no noise source.** Fret noise, breath, seashore, applause and
+gunshot *are* noise; three tuned oscillators can approximate the envelope and the register and
+nothing else, so the last two families are gestures. The same gap is why there is no drum map on
+channel 10 — a snare or a hi-hat is not reachable from here at all, and it is also what leaves the
+flutes without breath. Adding noise is the single change that would move the most, and it would
+want to be a fourth oscillator mode rather than a fourth wavetable, since noise does not have a
+phase to accumulate.
+
+**Two thirds of the patches use two oscillators, not three**, and that is a budget decision as much
+as a musical one: one oscillator costs 3.92M of the 6M deadline at 64 voices and three cost 5.01M,
+so a flute that is nearly a sine should not pay for a detuned stack it never uses. Dropping one
+rebalances the levels that remain, so nothing gets quieter. Three are kept where the detune *is* the
+sound — organs, strings, ensembles, brass, pads, effects.
+
+**Strings, brass, reeds, pipes and leads use the channel LFO phase; ensembles deliberately do not.**
+One player has one vibrato, so the notes of a chord should move together. A section genuinely has
+independent vibrato, and that is what makes it read as a section rather than as one large
+instrument.
+
+Worth knowing before retuning: the patches are systematic rather than heard. They come from a family
+base plus per-instrument tweaks, and were corrected twice by measurement — once when the mod wheel
+turned out to be reaching four semitones where half a semitone is normal, and once when the LFO to
+cutoff was sweeping three and a half octaves. They have not been tuned by ear the way the filter
+curves were.
 
 ## USB audio output
 
