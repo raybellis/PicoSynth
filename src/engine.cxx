@@ -99,6 +99,11 @@ uint32_t __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 		if (p.dco_env_level && v.dco_env) {
 			v.dco_env->update();
 		}
+
+		// and the DCF envelope, which only exists at non-zero depth
+		if (v.dcf_env) {
+			v.dcf_env->update();
+		}
 	}
 
 	// set up the interpolator
@@ -175,8 +180,32 @@ uint32_t __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 		// sound controllers.  this is done per buffer rather than at
 		// note-on so that moving a controller takes effect on notes
 		// that are already sounding
-		v.filter->set_cutoff(cutoff_table[cc_offset(p.vcf_freq, chan.control[brightness])]);
-		v.filter->set_q(cc_offset(p.vcf_reso, chan.control[resonance]));
+		//
+		// cutoff_table lands on one of 128 coarse steps; the envelope
+		// then moves it in units of 1/SVF_STEPS of a semitone, which is
+		// what svf_table's sub-semitone resolution exists for - nothing
+		// else can reach between the coarse steps
+		int32_t cutoff = cutoff_table[cc_offset(p.dcf_freq, chan.control[brightness])];
+
+		if (v.dcf_env) {
+			// depth is centred on 64, so it spans -64 .. +63 semitones
+			int32_t depth = (int32_t)p.dcf_env_level - 64;
+			int32_t env = v.dcf_env->level();		// 15 bits
+
+			// 64 * 16 * 32767 is 33.5M, so this stays inside int32
+			cutoff += (depth * SVF_STEPS * env) >> 15;
+
+			// set_cutoff clamps the top but takes a uint16_t, so a
+			// negative sweep would wrap to wide open instead of closing
+			if (cutoff < 0) {
+				cutoff = 0;
+			} else if (cutoff > SVF_LEN - 1) {
+				cutoff = SVF_LEN - 1;
+			}
+		}
+
+		v.filter->set_cutoff(cutoff);
+		v.filter->set_q(cc_offset(p.dcf_reso, chan.control[resonance]));
 
 		// apply the filter.  this has to happen even while the voice
 		// is inaudible, otherwise its state is stale by the time the

@@ -17,6 +17,7 @@ void Voice::init()
 	patch = nullptr;
 	dca_env = nullptr;
 	dco_env = nullptr;
+	dcf_env = nullptr;
 	filter = nullptr;
 }
 
@@ -63,6 +64,13 @@ void Voice::note_on(uint8_t _chan, uint8_t _note, uint8_t _vel)
 		dco_env->gate_on();
 	}
 
+	// set up the DCF envelope.  its depth is centred on 64 rather than
+	// zero, so 64 - not 0 - is what means "no filter envelope"
+	if (p.dcf_env_level != 64) {
+		dcf_env = new ADSR(p.dcf_env_a, p.dcf_env_d, p.dcf_env_s, p.dcf_env_r);
+		dcf_env->gate_on();
+	}
+
 	// setup DCO
 	dco_step_base = note_table[note];
 	dco_pos = 0;
@@ -79,6 +87,10 @@ void Voice::note_off()
 
 	if (dco_env) {
 		dco_env->gate_off();
+	}
+
+	if (dcf_env) {
+		dcf_env->gate_off();
 	}
 
 	steal = true;		// voice may now be stolen
@@ -123,6 +135,7 @@ void VoicePool::release(Voice& v)
 {
 	delete v.dca_env;
 	delete v.dco_env;
+	delete v.dcf_env;
 	delete v.filter;
 
 	// resets the pointers above, and marks the voice free

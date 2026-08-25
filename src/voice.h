@@ -31,6 +31,7 @@ private:
 	Patch*					patch;
 	Envelope*				dca_env;
 	Envelope*				dco_env;
+	Envelope*				dcf_env;
 	Filter*					filter;
 
 private:

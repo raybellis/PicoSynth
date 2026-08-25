@@ -254,8 +254,8 @@ limit of this topology, which also caps every entry at 16384 and so keeps the ta
 and 4 KB. It was 1/128 and 32 KB, which bought a quarter of a cent of precision that nothing could
 use: only 128 of those entries were ever reachable, because the only thing that indexes the table is
 `cutoff_table`, and that has one entry per value of a 7-bit parameter. The sub-semitone resolution
-that remains is there for a filter envelope to sweep through — which is also why `set_cutoff` still
-takes a fine index rather than a 7-bit one. 1/16 semitone is 3.1 cents worst case, well below
+that remains is what the filter envelope sweeps through — which is also why `set_cutoff` takes a
+fine index rather than a 7-bit one. 1/16 semitone is 3.1 cents worst case, well below
 audibility for a cutoff and finer than a sweep moves between buffers anyway, since the coefficients
 only change at 172 Hz. Shrinking it left every selectable cutoff within 3.1 cents and the preset
 default bit-identical, note 90 being an exact multiple of the step.
@@ -399,9 +399,32 @@ apart. The fault report named the culprit in one reading.
 ## Current state (branch `filter-float`)
 
 Work in progress on a state-variable filter (`src/filter.{h,cxx}`, per-voice), now driven by the
-`vcf_freq` / `vcf_reso` fields of `Patch`, offset by CC 74 and CC 71, and both curves have now been
+`dcf_freq` / `dcf_reso` fields of `Patch`, offset by CC 74 and CC 71, and both curves have now been
 tuned by ear on hardware — the presets sit at 64 for both, which lands on Q = 1.28 and a cutoff of
-1480 Hz. There is still no filter envelope.
+1480 Hz.
+
+The prefix is `dcf`, not `vcf`, throughout `Patch` and the engine: there is no voltage anywhere in
+this signal path. `svf_*` is a different thing and stays — that names the state-variable topology
+itself, not the synth's filter section.
+
+**There is now a filter envelope**, a third per-voice ADSR beside the DCA and DCO ones. Its depth
+`dcf_env_level` is bipolar and centred on 64, matching the sound-controller convention the other two
+filter parameters follow: 127 sweeps 63 semitones up, 0 sweeps 64 down, 64 is no modulation at all.
+Depth maps to semitones exactly rather than approximately, because `cutoff_table[i]` is
+`note * SVF_STEPS`, so adding `depth * SVF_STEPS` adds that many semitones. This is what the
+sub-semitone resolution of `svf_table` was being kept for — the coarse 7-bit path through
+`cutoff_table` cannot reach between its 128 steps, and a sweep has to.
+
+Two things to know before touching it. The envelope is created only when the depth is not 64, so
+`v.dcf_env` being null is the normal case and every use is guarded. And **zero is not neutral for
+`dcf_env_level`** — `Patch` is a POD filled with designated initialisers, so a preset that omits the
+field gets a full *downward* sweep and a filter that shuts. Every preset therefore sets it
+explicitly. It is the only field in `Patch` with that property, and it is the obvious way to break a
+newly added preset.
+
+`set_cutoff` clamps its top but takes a `uint16_t`, so the engine has to clamp the bottom itself
+before the cast: a negative sweep that went through unclamped would wrap to a huge value and land on
+"wide open", which is the exact opposite of what was asked for.
 
 The two filter controllers follow the MIDI sound-controller convention of offsetting the patch
 around a centre of 64 rather than replacing it (`cc_offset` in `engine.cxx`), which is why
