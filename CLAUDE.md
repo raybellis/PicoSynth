@@ -169,6 +169,20 @@ A `Voice` points at (never owns) a `Channel` and a `Patch`, and owns its `Envelo
 7-bit parameters; the four presets in `src/presets.c` are hard-coded and program change selects
 `presets[program % 4]`.
 
+**Zero is not neutral for several `Patch` fields, and that is the most reliable way to break a new
+preset.** `Patch` is a POD filled with designated initialisers, so anything omitted is zero — and
+for these, zero is not "off":
+
+| field | zero means | neutral is |
+|---|---|---|
+| `dcf_env_level` | full downward sweep, filter shut | 64 |
+| `Osc::level` | that oscillator silent (all three: no sound at all) | whatever the patch wants |
+
+Everything added since is deliberately signed or zero-neutral for exactly this reason — `Osc::coarse`
+and `Osc::fine`, `dcf_vel`, `dcf_press`, `dcf_track`, and all of the LFO depths. Prefer that when
+adding more. The centred-on-64 form is for values arriving over the wire, where the MIDI convention
+demands it.
+
 **Two controllers must be defaulted or they silence the synth**, and both are defaulted in
 `Channel::init()`. `control[]` is zero-initialised; `volume` and `expression` both multiply the DCA
 chain, so either left at zero mutes the channel outright, and `pan` left at zero mutes both sides
@@ -189,6 +203,39 @@ lifting it leaves those voices ringing, there being no CC 123 all-notes-off yet.
 is how it is played, and a score's dynamics live in the second one. It multiplies the DCA chain
 alongside volume.
 
+**CC 123 releases every voice on a channel and CC 120 cuts them dead**, both ignoring the sustain
+pedal — which is the point of them, since a file that sends a pedal down and then stops has nothing
+left to lift it. Releasing mid-iteration is safe: the pool iterator only visits voices in use, and
+`release()` marks them free behind it.
+
+**There are two LFOs, and they are kept separate because they sound different.** Per voice, the
+phase is whatever that voice was last doing, so notes wobble independently and the result reads as
+an ensemble or a chorus; per channel, all its notes share one phase and it reads as vibrato.
+`lfo_global` picks. The channel form is also the cheaper of the two — sixteen adds a buffer in
+`SynthEngine::update`, against one per *voice*.
+
+Depth to pitch sums three sources, capped at 127: the patch's own `lfo_depth`, what the mod wheel
+adds through `lfo_wheel`, and what aftertouch adds through `lfo_press`. The patch's own is the one
+that matters structurally — the depth used to be multiplied by the wheel, so with the wheel down
+there was no LFO at all and a patch could not have vibrato of its own.
+
+`lfo_delay` fades the LFO in, and is applied to the LFO **itself** rather than to each depth, so
+every destination arrives together. `lfo_dcf` sweeps the cutoff and `lfo_dca` is a tremolo, each
+with its own depth so a patch can have wah without vibrato or the reverse.
+
+**The tremolo ducks from unity rather than modulating around it**, so the gain can never exceed 1
+and nothing downstream has to keep room for it. It also has to be applied to `level_l`/`level_r`
+rather than folded into the DCA chain: that chain is already 50 bits, and one more 15-bit stage
+would put it past what a `uint64_t` holds.
+
+**The cutoff has five sources and is clamped once, after summing all of them** — the patch value
+through `cutoff_table`, key tracking, velocity, aftertouch, the LFO, and the envelope. The clamp
+used to sit inside the envelope branch, which was safe only while the envelope was the sole thing
+moving it; any of the others could drive it negative, and `set_cutoff` takes a `uint16_t`, so it
+would wrap to wide open rather than closing. Key tracking is measured from note 60, so `dcf_freq`
+stays the cutoff at middle C whatever it is set to, and 127 means the cutoff follows the keyboard
+one for one.
+
 **Voice allocation** belongs entirely to `VoicePool`: first-free, then steal-any-released (`steal` is
 set on note-off, so a voice in its release tail can be taken). Both paths return through the private
 `claim()`, which is the invariant that matters — an earlier version returned a stolen voice still
@@ -197,13 +244,53 @@ deletes them and re-`init()`s. Iterating a pool visits only voices in use, so en
 tests `free` itself; releasing mid-iteration is safe. Note `new`/`delete` happen on core 1 per
 note-on/off — a known wart in a real-time path.
 
-**Audio path per buffer** (`SynthEngine::update`): tick all envelopes and reap voices whose DCA
-envelope went inactive → configure `interp0` once → per active voice, compute the DCA level
-(chaining 15-bit envelope × patch level × velocity × channel volume × expression × pan), compute
-`dco_step` from `note_table[note]` modulated in turn by pitch bend, the DCO envelope, and the LFO →
-render mono samples → filter → accumulate into the stereo `int32_t` buffer. `main.cxx`'s
-`audio_task()` then scales the accumulator into the `int16_t` output buffer — see the output stage
-below, which is not a plain shift any more.
+**Audio path per buffer.** `SynthEngine::update` ticks all envelopes and reaps voices whose DCA
+envelope went inactive, advances every channel's LFO, configures both interpolators once, and then
+calls `Voice::render` per voice. **The engine manages voices and MIDI; it does not synthesise** —
+everything per-voice is in `voice.cxx`, which is why that file is more than twice the size of
+`engine.cxx`. Keep it that way.
+
+`Voice::render` computes the DCA level (chaining 15-bit envelope × patch level × velocity × channel
+volume × expression × pan), works out the pitch modulation common to all three oscillators, renders
+and mixes them, sets and applies the filter, and accumulates into the stereo `int32_t` buffer.
+`main.cxx`'s `audio_task()` then scales the accumulator into the `int16_t` output buffer — see the
+output stage below, which is not a plain shift any more.
+
+**Three oscillators per voice, and the tuning reaches them by two different routes.** Each `Osc` in
+`Patch` has a waveform, a level, and coarse and fine tuning. Coarse shifts the note before the table
+lookup — exact, since a semitone is a table entry, and unbounded within the keyboard. Fine goes
+through `frequency_modulate`, which reaches only an octave either way because that is all
+`power_table` covers, and so *could not carry coarse* even if it were convenient. Both are constant
+for the life of a note, so `Voice::note_on` folds them into `dco_step_base[]` and they cost nothing
+per buffer.
+
+Both are also **signed, with zero meaning no offset**, breaking the centred-on-64 convention the
+rest of `Patch` follows. Those are 7-bit values arriving over the wire; these are preset-only
+fields, and the centred form has a nasty property in a POD full of designated initialisers — the
+neutral value is not zero, so an omitted field is a large detune rather than none. See the list of
+fields further down that share that hazard.
+
+**Two interpolators, not one, and that is what makes three oscillators affordable.** `interp0`
+alone meant one pass over the buffer per oscillator, with every pass after the first a
+read-modify-write to add itself to what was already there. `interp1` was sitting unused on core 1,
+so a pair of oscillators now share a single pass with one interpolator each. The mix scales with how
+many are actually live — an oscillator at zero level is skipped, not multiplied by nothing:
+
+| live | passes | |
+|---|---|---|
+| 1 | 1 | scales inline |
+| 2 | 1 | one interpolator each, the wide accumulator never touched |
+| 3 | 2 | pair in one pass, third reads it back and scales on the way out |
+
+Measured at 64 voices against the 6,000,000 ns deadline: one oscillator 3.92M (65.3%), three at a
+pass each ~5.9M (~98%), three paired across the two interpolators **5.01M (83.5%)**. So three cost
+28% over one rather than tripling anything — the filter, the DCA chain and the accumulate are
+unchanged — and the pairing takes 15% back off the naive form. Note the margin is now much narrower
+than it was: about 1M ns spare where there used to be 2.4M.
+
+One oscillator at full level comes out at full scale to within 0.07 dB, and three at full level
+reach three times that and saturate. That is the conventional arrangement — levels are independent,
+and a patch wanting all three loud turns them down.
 
 **The output stage scales for how voices actually sum, and limits what is left.** It used to shift
 down by 6, which is what 64 voices at full level need *in phase*. They are never in phase: voices
@@ -227,7 +314,8 @@ should be louder than a single note. Dividing by `sqrt(voices)` is the same mist
 The gain here moves only when the output would otherwise clip. Velocity is left alone for the same
 reason — a passage marked quiet should sound quiet.
 
-All three functions in that path — `SynthEngine::update`, `Voice::update`, `SVF::apply` — are marked
+Every function in that path — `SynthEngine::update`, `Voice::render`, `Voice::oscillators`,
+`SVF::apply` — is marked
 `__not_in_flash_func` so the per-sample loops don't fetch instructions over XIP. Keep it that way
 when adding to it. Note also that the filter runs *before* the `if (!dca) continue;` early-out — a
 filter that skips buffers comes back with state hundreds of samples stale, which is an audible
@@ -290,7 +378,7 @@ update them when changing any scaling step, since overflow here is silent and au
 
 **The filter alone is single-precision float; everything else stays fixed point.** `SVF::apply`
 keeps `low` and `band` in `float`, and the boundary sits at its edges: it reads and writes the same
-`int16_t` buffer as before, so `Voice::update`, the DCA chain and the accumulator are untouched.
+`int16_t` buffer as before, so `Voice::oscillators`, the DCA chain and the accumulator are untouched.
 That was measured, not assumed — see the note further down.
 
 The coefficient tables stay integer and are converted **once per buffer**, in the preamble, where
@@ -345,10 +433,10 @@ and `buf` is `int16_t*`, so they may alias and the compiler does reload both eve
 hoisting measured two instructions a sample worse, because on M0+ the extra live values land in
 high registers and every `muls` then needs a `mov` down to a low one.
 
-**Hardware used directly:** `interp0` in blend/wave-lookup mode is the wavetable oscillator
-(shift 15, mask `wave_shift`, raw add) — `Voice::update` loads the step/base/accum and pops samples;
-`hw_divider` for bend scaling; SysTick as a cycle counter via `bench.h` (`bench_delta` handles the
-24-bit wrap).
+**Hardware used directly:** `interp0` *and* `interp1` in blend/wave-lookup mode are the wavetable
+oscillators (shift 15, mask `wave_shift`, raw add) — `Voice::oscillators` loads the step/base/accum
+and pops samples, using both so that a pair of oscillators can share one pass; `hw_divider` for bend
+scaling; SysTick as a cycle counter via `bench.h` (`bench_delta` handles the 24-bit wrap).
 
 The LCD shows three lines: min and max **nanoseconds**, then the voice count as `now/peak`.
 `SynthEngine::update` returns how many voices it rendered — the pool iterator only visits voices in
@@ -452,12 +540,14 @@ wrong guesses on the endpoint panic above — several of them confidently wrong,
 hang look identical from outside and a beacon placed above USB's interrupt priority cannot tell them
 apart. The fault report named the culprit in one reading.
 
-## Current state (branch `filter-float`)
+## The filter's two curves
 
-Work in progress on a state-variable filter (`src/filter.{h,cxx}`, per-voice), now driven by the
-`dcf_freq` / `dcf_reso` fields of `Patch`, offset by CC 74 and CC 71, and both curves have now been
-tuned by ear on hardware — the presets sit at 64 for both, which lands on Q = 1.28 and a cutoff of
-1480 Hz.
+The state-variable filter (`src/filter.{h,cxx}`, per-voice) is driven by the `dcf_freq` /
+`dcf_reso` fields of `Patch`, offset by CC 74 and CC 71, and both curves were tuned by ear on
+hardware around a midpoint of 64 — which lands on Q = 1.28 and a cutoff of 1480 Hz.
+
+**The presets no longer all sit at that midpoint**, so read the curves below as describing the
+mapping rather than what any particular preset does.
 
 The prefix is `dcf`, not `vcf`, throughout `Patch` and the engine: there is no voltage anywhere in
 this signal path. `svf_*` is a different thing and stays — that names the state-variable topology
