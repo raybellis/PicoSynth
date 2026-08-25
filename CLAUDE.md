@@ -169,6 +169,26 @@ A `Voice` points at (never owns) a `Channel` and a `Patch`, and owns its `Envelo
 7-bit parameters; the four presets in `src/presets.c` are hard-coded and program change selects
 `presets[program % 4]`.
 
+**Two controllers must be defaulted or they silence the synth**, and both are defaulted in
+`Channel::init()`. `control[]` is zero-initialised; `volume` and `expression` both multiply the DCA
+chain, so either left at zero mutes the channel outright, and `pan` left at zero mutes both sides
+through `pan_table`. This is not hypothetical — pan was exactly this bug, and it hid for a long time
+because most MIDI files send CC 10 and mask it. Any new controller that multiplies the chain needs
+the same treatment.
+
+**Sustain (CC 64) defers the release rather than suppressing it.** A note-off arriving with the
+pedal down marks the voice `sustained` and leaves it sounding; `SynthEngine::sustain_off()` settles
+the debt when the pedal lifts. The channel holds the pedal state but only the engine can see the
+voices it is holding, so `SynthEngine::midi_in` intercepts the controller after forwarding it. On a
+pedal-heavy piece the peak voice count went from 11 to 23. Two limits: a sustained voice is not
+stealable, since `steal` is only set by a real note-off, so a heavily pedalled passage can exhaust
+the pool and drop notes rather than take the oldest; and a file that sends pedal-down without ever
+lifting it leaves those voices ringing, there being no CC 123 all-notes-off yet.
+
+**Expression (CC 11) is the other half of MIDI volume.** CC 7 is where a part sits in the mix, CC 11
+is how it is played, and a score's dynamics live in the second one. It multiplies the DCA chain
+alongside volume.
+
 **Voice allocation** belongs entirely to `VoicePool`: first-free, then steal-any-released (`steal` is
 set on note-off, so a voice in its release tail can be taken). Both paths return through the private
 `claim()`, which is the invariant that matters — an earlier version returned a stolen voice still
@@ -179,10 +199,33 @@ note-on/off — a known wart in a real-time path.
 
 **Audio path per buffer** (`SynthEngine::update`): tick all envelopes and reap voices whose DCA
 envelope went inactive → configure `interp0` once → per active voice, compute the DCA level
-(chaining 15-bit envelope × patch level × velocity × channel volume × pan), compute `dco_step` from
-`note_table[note]` modulated in turn by pitch bend, the DCO envelope, and the LFO → render mono
-samples → filter → accumulate into the stereo `int32_t` buffer. `main.cxx`'s `audio_task()` then
-shifts the accumulator down by 6 into the `int16_t` I2S buffer.
+(chaining 15-bit envelope × patch level × velocity × channel volume × expression × pan), compute
+`dco_step` from `note_table[note]` modulated in turn by pitch bend, the DCO envelope, and the LFO →
+render mono samples → filter → accumulate into the stereo `int32_t` buffer. `main.cxx`'s
+`audio_task()` then scales the accumulator into the `int16_t` output buffer — see the output stage
+below, which is not a plain shift any more.
+
+**The output stage scales for how voices actually sum, and limits what is left.** It used to shift
+down by 6, which is what 64 voices at full level need *in phase*. They are never in phase: voices
+sit at unrelated phases and sum in power, so 64 of them reach about 8 times one voice, not 64 times.
+That reserved 18 dB nothing ever used, and it measured — a 16-channel piece with the voice count
+pinned at 64 peaked at 2100 of 32767, which is −24 dB, while a six-voice piano piece was inaudible
+without winding the monitors up. `OUTPUT_SHIFT` is 3 now, `sqrt(64)`, and it is a named constant
+because its value is a claim about how voices sum.
+
+The rare genuinely coherent peak goes to a stereo-linked peak limiter. Attack is instantaneous, so
+the gain exactly meets the threshold and the output cannot exceed it; release is a slow exponential
+to unity over 150 ms, which is what stops it pumping. One gain covers both channels — limiting them
+separately would pull the image toward whichever side was quieter every time it engaged. Verified on
+the host: a 4× overload gives exactly 0.25 gain, recovering 0.46 / 0.80 / 0.99 at 50 / 200 / 600 ms,
+and the worst case for ripple, a loud 80 Hz sine, modulates the gain by 0.32 dB.
+
+**It is deliberately not a voice-count normaliser**, and that is worth stating because it is the
+obvious thing to reach for and it is wrong. Dividing by the number of sounding voices makes adding a
+note quieten every note already playing: audible pumping, and backwards musically, since a chord
+should be louder than a single note. Dividing by `sqrt(voices)` is the same mistake more quietly.
+The gain here moves only when the output would otherwise clip. Velocity is left alone for the same
+reason — a passage marked quiet should sound quiet.
 
 All three functions in that path — `SynthEngine::update`, `Voice::update`, `SVF::apply` — are marked
 `__not_in_flash_func` so the per-sample loops don't fetch instructions over XIP. Keep it that way
@@ -223,6 +266,15 @@ these tables has yet been shown to cost more than about 3% of the audio budget.
 `frequency_modulate()` applies a pitch offset by multiplying the step by a 1:16 fixed-point
 2^(x/8192) — so all pitch modulation sources (bend, DCO envelope, LFO) must be reduced to a 14-bit
 signed value in that domain before use, `x` spanning one octave either side of unity.
+
+**That reduction is where a modulation source quietly loses its range**, so check the arithmetic
+rather than the comment beside it. The DCO envelope shifted by 10, which left a full-depth pitch
+envelope reaching 4063 of the 8192 that is an octave — half of what was intended — while the
+comments alongside claimed 16, 24 and 14 bits for values that were actually 15, 22 and 12. It is
+`>> 9` now: `32767 * 127 >> 9` is 8127, an octave to within 0.8%, and still inside the signed 14-bit
+domain. Nothing in the tree exercises this path, every preset having `dco_env_level` of 0, so it was
+verified by temporarily giving a preset a full-depth envelope gliding down over a second and
+checking the interval against the octave below.
 
 `power_table` only stores the *upper* octave, at `POWER_LEN` entries with the index shifted right
 by `POWER_SHIFT`. The lower octave is the very same entries read as 1:16 rather than 1:15 — the
@@ -339,9 +391,11 @@ safe to move back to RP2040 unchanged:
   reaches 8589017100 against a `uint32_t` ceiling, costing exactly 65536 off the phase increment
   whenever modulation went *upward*. One `umull` replaces it. See the commit for the measured
   damage; it was thousands of cents on low notes.
-- the DCA chain in `SynthEngine::update` carries all 43 bits instead of shifting twice partway
+- the DCA chain in `SynthEngine::update` carries all 50 bits instead of shifting twice partway
   through to stay in range, which recovers 11 bits and retires a multiply that finished within 1%
-  of overflowing `uint32_t`.
+  of overflowing `uint32_t`. It was 43 before expression joined it; the peak is 63,013, which still
+  lands inside the `uint16_t` it is assigned to, and 64 voices still accumulate to 2.0M against
+  `int32`'s 2.1 billion.
 - `SVF::apply` no longer multiplies in fixed point at all — it is float, and depends on the FPU,
   `vcvtr` and `ssat` besides. See below.
 
