@@ -17,6 +17,14 @@
 // costs nothing; fine goes through frequency_modulate, which can only
 // reach an octave either way - the whole of power_table - and so could
 // not carry coarse even if it were convenient.
+// indices into waves[], named so a preset says what it sounds like
+enum {
+	SINE	= 0,
+	SQUARE	= 1,
+	SAW		= 2,
+	TRI		= 3,
+};
+
 typedef struct {
 
 	uint8_t				wave;			// index into waves[]
@@ -85,19 +93,31 @@ typedef struct {
 	// is slower, so vibrato arrives after the note rather than with it
 	uint8_t				lfo_delay;
 
-	// depth to pitch, summed from three sources and capped at 127.
-	// lfo_depth applies always - a patch can have vibrato of its own
-	// without anyone touching a controller, which the wheel-only form
-	// made impossible
-	uint8_t				lfo_depth;		// intrinsic
+	// How much LFO is running at all, summed from these three and
+	// capped at 127.  This scales the oscillator itself, before any of
+	// the routing below, so a controller reaches every destination
+	// rather than only the pitch - which is what the mod wheel used to
+	// do, leaving a tremolo or a filter sweep stuck at full depth with
+	// no way to bring it in.
+	//
+	// lfo_amount applies always, so a patch can have movement of its
+	// own without anyone touching a controller.
+	uint8_t				lfo_amount;		// intrinsic
 	uint8_t				lfo_wheel;		// added by the mod wheel
 	uint8_t				lfo_press;		// added by aftertouch
 
-	// the LFO's other destinations, each with its own depth so that a
-	// patch can have wah without vibrato or the reverse
+	// and where that goes.  Pure routing depths: each says how far this
+	// destination moves at full amount, and nothing here knows what the
+	// controllers are doing
+	uint8_t				lfo_pitch;		// vibrato, in 64ths of an octave
 	uint8_t				lfo_dcf;		// to cutoff, in semitones
 	uint8_t				lfo_dca;		// to amplitude, as tremolo
 
 } Patch;
 
-extern Patch presets[];
+// const on purpose: 128 patches at 41 bytes is 5 KB, and a non-const
+// array goes to .data, which costs that much RAM *and* the same again in
+// flash for the initialiser.  Nothing writes them
+extern const Patch presets[];
+
+#define NPRESETS		128

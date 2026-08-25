@@ -261,19 +261,25 @@ void __not_in_flash_func(Voice::render)(int32_t* samples, size_t n)
 	int32_t lfo_raw = waves[p.lfo_wave][phase >> 16];		// 16 bits
 	lfo_raw = (lfo_raw * lfo_ramp) >> 15;
 
-	// depth to pitch is the sum of what the patch asks for and what the
-	// two controllers add, capped where the table runs out
-	int32_t depth = p.lfo_depth
+	// How much LFO is running: the patch's own, plus what the two
+	// controllers add.  Applied to the oscillator itself rather than to
+	// each destination, so the mod wheel reaches the filter sweep and
+	// the tremolo as well as the pitch - it used to reach only the
+	// pitch, which left the other two stuck at whatever the patch said
+	int32_t amount = p.lfo_amount
 		+ ((p.lfo_wheel * chan.control[modwheel]) >> 7)
 		+ ((p.lfo_press * chan.pressure) >> 7);
 
-	if (depth > 127) {
-		depth = 127;
+	if (amount > 127) {
+		amount = 127;
 	}
 
-	// 32767 * 127 >> 9 is 8127, an octave to within 0.8% - the same
-	// reduction the DCO envelope makes, and for the same reason
-	int16_t lfo = (int16_t)((lfo_raw * depth) >> 9);
+	lfo_raw = (lfo_raw * amount) >> 7;
+
+	// and where it goes.  32767 * 127 >> 9 is 8127, an octave to within
+	// 0.8% - the same reduction the DCO envelope makes, and for the
+	// same reason
+	int16_t lfo = (int16_t)((lfo_raw * p.lfo_pitch) >> 9);
 
 	// Tremolo ducks from unity rather than modulating around it, so the
 	// gain can never exceed 1 and nothing downstream has to keep room

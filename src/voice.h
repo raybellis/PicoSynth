@@ -41,7 +41,7 @@ private:
 	uint16_t				lfo_ramp;
 
 	Channel*				channel;
-	Patch*					patch;
+	const Patch*			patch;
 	Envelope*				dca_env;
 	Envelope*				dco_env;
 	Envelope*				dcf_env;

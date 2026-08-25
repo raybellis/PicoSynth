@@ -55,7 +55,7 @@ void Channel::set_program(uint8_t n)
 // patch that asks for the global phase
 void Channel::lfo_tick()
 {
-	lfo_pos = (lfo_pos + note_table[presets[program % 4].lfo_freq]) & (WAVE_MAX - 1);
+	lfo_pos = (lfo_pos + note_table[presets[program % NPRESETS].lfo_freq]) & (WAVE_MAX - 1);
 }
 
 void Channel::set_cc(uint8_t cc, uint8_t v)

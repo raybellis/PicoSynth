@@ -102,7 +102,7 @@ void SynthEngine::note_on(uint8_t chan, uint8_t note, uint8_t vel)
 	if (vp) {
 		auto& v = *vp;
 		v.channel = &channel[chan];
-		v.patch = &presets[v.channel->program % 4];
+		v.patch = &presets[v.channel->program % NPRESETS];
 		v.note_on(chan, note, vel);
 	}
 }
