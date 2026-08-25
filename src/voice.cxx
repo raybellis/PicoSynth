@@ -332,12 +332,10 @@ void __not_in_flash_func(Voice::render)(int32_t* samples, size_t n)
 	}
 
 	if (dcf_env) {
-		// depth is centred on 64, so it spans -64 .. +63 semitones
-		int32_t env_depth = (int32_t)p.dcf_env_level - 64;
 		int32_t env = dcf_env->level();			// 15 bits
 
-		// 64 * 16 * 32767 is 33.5M, so this stays inside int32
-		cutoff += (env_depth * SVF_STEPS * env) >> 15;
+		// 127 * 16 * 32767 is 66.6M, so this stays inside int32
+		cutoff += ((int32_t)p.dcf_env_level * SVF_STEPS * env) >> 15;
 	}
 
 	// clamped once, after everything that moves it.  set_cutoff clamps
@@ -391,9 +389,8 @@ void Voice::note_on(uint8_t _chan, uint8_t _note, uint8_t _vel)
 		dco_env->gate_on();
 	}
 
-	// set up the DCF envelope.  its depth is centred on 64 rather than
-	// zero, so 64 - not 0 - is what means "no filter envelope"
-	if (p.dcf_env_level != 64) {
+	// set up the DCF envelope, which only exists at non-zero depth
+	if (p.dcf_env_level) {
 		dcf_env = new ADSR(p.dcf_env_a, p.dcf_env_d, p.dcf_env_s, p.dcf_env_r);
 		dcf_env->gate_on();
 	}

@@ -19,7 +19,6 @@ Patch presets[] = {
 
 		.dcf_freq		= 64,
 		.dcf_reso		= 64,
-		.dcf_env_level	= 64,			// no filter envelope
 
 		.lfo_freq		= 64,
 		.lfo_wheel		= 20,
@@ -74,7 +73,7 @@ Patch presets[] = {
 		// the decay rate is per buffer, so 6 ms a step: this one falls
 		// 128 a step over the 22527 between peak and sustain, which is
 		// 176 steps, a little over a second
-		.dcf_env_level	= 96,
+		.dcf_env_level	= 32,			// +32 semitones
 		.dcf_env_a		= 40,
 		.dcf_env_d		= 4,
 		.dcf_env_s		= 40,
@@ -101,7 +100,6 @@ Patch presets[] = {
 
 		.dcf_freq		= 64,
 		.dcf_reso		= 64,
-		.dcf_env_level	= 64,			// no filter envelope
 
 		// vibrato, and the demonstration of what the channel LFO is
 		// for: one phase shared by every note, arriving 1.8 s after the
@@ -135,7 +133,6 @@ Patch presets[] = {
 
 		.dcf_freq		= 64,
 		.dcf_reso		= 64,
-		.dcf_env_level	= 64,			// no filter envelope
 
 		// the LFO's other two destinations, on a preset of their own so
 		// they are not competing with vibrato to be heard.  a sine

@@ -39,7 +39,11 @@ typedef struct {
 	uint8_t				dca_env_s;
 	uint8_t				dca_env_r;
 
-	uint8_t				dco_env_level;
+	// signed, so the envelope can sweep the pitch either way: positive
+	// starts the note sharp and falls to pitch, negative starts it flat
+	// and rises.  frequency_modulate handles either without help - the
+	// folded power_table is what makes a negative offset exact
+	int8_t				dco_env_level;
 	uint8_t				dco_env_a;
 	uint8_t				dco_env_d;
 	uint8_t				dco_env_s;
@@ -54,14 +58,15 @@ typedef struct {
 	uint8_t				dcf_track;		// key follow, 127 = one for one
 	int8_t				dcf_press;		// semitones at full aftertouch
 
-	// Filter envelope depth, centred on 64: 64 is no modulation, 127
-	// sweeps up by 63 semitones and 0 down by 64.
+	// Filter envelope depth, in semitones: positive sweeps the cutoff
+	// up, negative down, and zero is no modulation at all.
 	//
-	// This is the one field where zero is *not* neutral.  Patch is a POD
-	// filled with designated initialisers, so anything a preset omits
-	// comes out as zero - and zero here is a full downward sweep, which
-	// shuts the filter.  Every preset must set this explicitly.
-	uint8_t				dcf_env_level;
+	// This was a 7-bit value centred on 64, matching the controllers -
+	// but no controller touches it, and the centred form meant a preset
+	// that omitted the field got a full downward sweep and a shut filter
+	// rather than nothing.  Signed is both safer and easier to read: the
+	// preset that wants 32 semitones now says 32 instead of 96
+	int8_t				dcf_env_level;
 	uint8_t				dcf_env_a;
 	uint8_t				dcf_env_d;
 	uint8_t				dcf_env_s;

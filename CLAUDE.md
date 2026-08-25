@@ -175,13 +175,19 @@ for these, zero is not "off":
 
 | field | zero means | neutral is |
 |---|---|---|
-| `dcf_env_level` | full downward sweep, filter shut | 64 |
 | `Osc::level` | that oscillator silent (all three: no sound at all) | whatever the patch wants |
+| `dca_env_level` | the voice silent | whatever the patch wants |
 
-Everything added since is deliberately signed or zero-neutral for exactly this reason — `Osc::coarse`
-and `Osc::fine`, `dcf_vel`, `dcf_press`, `dcf_track`, and all of the LFO depths. Prefer that when
-adding more. The centred-on-64 form is for values arriving over the wire, where the MIDI convention
-demands it.
+Both of those are *levels*, where zero-means-silent is unavoidable rather than a design slip. Every
+other field is signed or zero-neutral, deliberately: `Osc::coarse` and `Osc::fine`, `dcf_vel`,
+`dcf_press`, `dcf_track`, `dcf_env_level`, `dco_env_level`, and all of the LFO depths. Prefer that
+when adding more.
+
+**The centred-on-64 form is only for values arriving over the wire**, where the MIDI convention
+demands it — `dcf_freq` and `dcf_reso`, which `cc_offset` shifts by CC 74 and CC 71. `dcf_env_level`
+used to follow it too, out of symmetry with those two, and that was a mistake: no controller touches
+it, so all the convention bought was a preset that shut the filter if it forgot the field. It is
+signed now, and reads better for it — the preset that wants 32 semitones says 32 rather than 96.
 
 **Two controllers must be defaulted or they silence the synth**, and both are defaulted in
 `Channel::init()`. `control[]` is zero-initialised; `volume` and `expression` both multiply the DCA
@@ -554,19 +560,14 @@ this signal path. `svf_*` is a different thing and stays — that names the stat
 itself, not the synth's filter section.
 
 **There is now a filter envelope**, a third per-voice ADSR beside the DCA and DCO ones. Its depth
-`dcf_env_level` is bipolar and centred on 64, matching the sound-controller convention the other two
-filter parameters follow: 127 sweeps 63 semitones up, 0 sweeps 64 down, 64 is no modulation at all.
-Depth maps to semitones exactly rather than approximately, because `cutoff_table[i]` is
+`dcf_env_level` is signed semitones: positive sweeps the cutoff up, negative down, zero is no
+modulation. Depth maps to semitones exactly rather than approximately, because `cutoff_table[i]` is
 `note * SVF_STEPS`, so adding `depth * SVF_STEPS` adds that many semitones. This is what the
 sub-semitone resolution of `svf_table` was being kept for — the coarse 7-bit path through
 `cutoff_table` cannot reach between its 128 steps, and a sweep has to.
 
-Two things to know before touching it. The envelope is created only when the depth is not 64, so
-`v.dcf_env` being null is the normal case and every use is guarded. And **zero is not neutral for
-`dcf_env_level`** — `Patch` is a POD filled with designated initialisers, so a preset that omits the
-field gets a full *downward* sweep and a filter that shuts. Every preset therefore sets it
-explicitly. It is the only field in `Patch` with that property, and it is the obvious way to break a
-newly added preset.
+The envelope is created only at non-zero depth, so `v.dcf_env` being null is the normal case and
+every use is guarded.
 
 `set_cutoff` clamps its top but takes a `uint16_t`, so the engine has to clamp the bottom itself
 before the cast: a negative sweep that went through unclamped would wrap to a huge value and land on
