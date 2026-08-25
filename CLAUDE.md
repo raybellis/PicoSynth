@@ -306,8 +306,10 @@ third line is what the first two should be read against. Note that formatting it
 job, so don't reintroduce `<sstream>` here.
 
 The timing figures: `bench_delta` counts `clk_sys` cycles and
-`audio_task` multiplies by 4, one cycle being 4 ns at 250 MHz. The deadline is 5,805,000, one
-256-sample buffer at 44.1 kHz. Three things to know before trusting the number: it spans only the
+`audio_task` multiplies by 4, one cycle being 4 ns at 250 MHz. The deadline is **6,000,000 ns**, one
+288-sample buffer at 48 kHz — it follows `CONFIG_BUFFER_SIZE` and `CONFIG_SAMPLE_RATE`, so it moves
+when either does, and the measurements further down were taken at the older 256 / 44.1 kHz where it
+was 5,805,000. Three things to know before trusting the number: it spans only the
 `memset` and `SynthEngine::update`, not the output copy or the audio buffer calls; `bench_min` and
 `bench_max` are lifetime extremes that nothing resets, so a slow first buffer pegs the maximum
 forever; and the `4 *` assumes the 250 MHz overclock actually took, which
@@ -497,6 +499,23 @@ latency against one of throughput, and the SVF is a strict serial recurrence, `l
 | float, 66 KB tables | 3,400,000 ns | 58.6% | 51.9 | 32 | 1.62 |
 | float, 13.7 KB tables | 3,300,000 ns | 56.8% | 50.4 | 32 | 1.57 |
 
+Those three are all at 256 samples / 44.1 kHz, against the 5,805,000 ns deadline of the time. The
+current configuration is 288 / 48 kHz, so both the buffer and the deadline are 12.5% longer and the
+percentages are not directly comparable — divide by the sample count to compare like with like:
+
+| | bench_max | of deadline | ns/sample |
+|---|---|---|---|
+| float, 13.7 KB tables, 256 @ 44.1 kHz | 3,300,000 ns | 56.8% | 12,891 |
+| **+ filter envelope + output limiter, 288 @ 48 kHz** | **3,641,612 ns** | **60.7%** | **12,644** |
+
+Per sample that is unchanged inside measurement noise, which is the expected result and worth
+knowing before optimising anything: the filter envelope costs one `update()` and a little
+arithmetic *per voice per buffer*, and the limiter about 1,700 operations per buffer against the
+~590,000 the voice loops cost at 64 voices. Neither is anywhere near the per-sample inner loops,
+which is where essentially the whole budget goes. `audio_task` is consequently still left in flash
+rather than `__not_in_flash_func`, despite the output stage now doing a float multiply, a `vcvtr`
+and an `ssat` per sample.
+
 The latency worry was real — CPI got *worse*, 1.41 → 1.62 — but the instruction count fell far
 enough to win by 27.7% anyway. The third row is the table shrink, which cost nothing in
 instructions and took another 25,000 cycles off the buffer; see the XIP note earlier for why size
@@ -523,4 +542,4 @@ per *sounding* voice for its two envelopes and filter — so the limit is CPU, n
 the pool holds costs a full render and filter pass per buffer, at roughly 65 instructions a sample,
 so 64 voices all sounding is on the order of 180M instructions a second against 250 MHz. Read the
 LCD before trusting a larger number: the third line gives the peak voice count and the second gives
-the worst time it was measured under, against a deadline of 5,805,000 ns.
+the worst time it was measured under, against a deadline of 6,000,000 ns.
