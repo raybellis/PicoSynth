@@ -45,6 +45,10 @@ private:
 	Envelope*				dca_env;
 	Envelope*				dco_env;
 	Envelope*				dcf_env;
+
+	// dco[1]'s own amplitude contour, null when it follows the DCA -
+	// which is the usual case, so every use is guarded
+	Envelope*				aux_env;
 	Filter*					filter;
 
 private:

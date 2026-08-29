@@ -31,6 +31,37 @@ code size and disassembly — useful when tuning the audio inner loop).
 
 The user's shell is tcsh; use `setenv`, not `export`, in any suggested shell snippets.
 
+**The compiler is the authority on warnings, not the language server.** The build runs `-Wall
+-Werror` and is clean. A language server in this tree is not, unless configured: clangd parses with
+the *host* toolchain by default, cannot then find `<cstring>`, and everything downstream of that
+failure is noise that looks exactly like a real defect — `SVF` reported abstract, `size_t` unknown,
+hardware headers missing, and includes reported unused that are demonstrably used (`dsp.h` provides
+`clamp16`, `pico.h` provides `__not_in_flash_func`). Do not act on any of that without checking it
+against a build.
+
+`utils/clangd_config.py` writes a `.clangd` that fixes it, by asking the compiler for its own
+implicit include directories — which are implicit precisely because they never appear in
+`compile_commands.json`. `.clangd` is **gitignored**: it names one toolchain at one version, so it
+is only right for the machine that generated it. Run the script after installing or upgrading
+arm-none-eabi-gcc.
+
+Three separate blocks, and each exists because a simpler arrangement broke a different case:
+
+| block | why not merged |
+|---|---|
+| `.c` | naming the C++ driver globally makes every C file fail `-std=gnu11 not allowed with 'C++'` |
+| `.cxx` | needs `-std=gnu++17` stated, since CMake omits `-std` when GCC's default already matches and clangd's default is not GCC's |
+| `.h` | forced to C++; left to itself clangd takes a lone `.h` for C, and libstdc++ then rejects the `<cstdint>` in `dsp.h` and `midi.h`. Naming a standard without forcing the language gets `-std=gnu++17 not allowed with 'C'` on `data.h` |
+
+Verify with `clangd --check=<file>`, but filter it: real diagnostics are the lines matching
+`^E\[...\] \[diag_name\] `. The `tweak: ExtractFunction ==> FAIL` lines are refactoring-availability
+probes, and "Failed to convert location" is internal chatter — neither is a diagnostic, and the
+`All checks completed, N errors` summary counts both. Prove the filter still catches something by
+injecting a deliberate error before trusting a clean sweep.
+
+`audio_usb.c` is absent from `compile_commands.json` whenever `CONFIG_AUDIO_USB` is 0, so it reports
+clean only because clangd's fallback happens to work. Switch the knob before believing it.
+
 The target device is `CONFIG_PICO_PLATFORM` / `CONFIG_PICO_BOARD` at the top of `CMakeLists.txt`,
 presently `rp2350` / `pico2`, and pushed into `PICO_PLATFORM` / `PICO_BOARD` before the SDK import
 because that is what settles the compiler flags. A build directory bakes the platform into its
@@ -181,13 +212,17 @@ for these, zero is not "off":
 
 | field | zero means | neutral is |
 |---|---|---|
-| `Osc::level` | that oscillator silent (all three: no sound at all) | whatever the patch wants |
+| `Osc::level` | that oscillator silent (both, plus no sub: no sound at all) | whatever the patch wants |
 | `dca_env_level` | the voice silent | whatever the patch wants |
 
 Both of those are *levels*, where zero-means-silent is unavoidable rather than a design slip. Every
 other field is signed or zero-neutral, deliberately: `Osc::coarse` and `Osc::fine`, `dcf_vel`,
-`dcf_press`, `dcf_track`, `dcf_env_level`, `dco_env_level`, and all of the LFO depths. Prefer that
-when adding more.
+`dcf_press`, `dcf_track`, `dcf_env_level`, `dco_env_level`, `sub_level`, the four `aux_env_*` rates,
+and all of the LFO depths. Prefer that when adding more.
+
+`sub_octaves` is the one field where zero means something other than zero: it reads as 1, because a
+sub at the same pitch as its parent is not a sub. It is only consulted when `sub_level` is non-zero,
+so a patch with no sub never reaches it.
 
 **The centred-on-64 form is only for values arriving over the wire**, where the MIDI convention
 demands it — `dcf_freq` and `dcf_reso`, which `cc_offset` shifts by CC 74 and CC 71. `dcf_env_level`
@@ -266,24 +301,33 @@ tests `free` itself; releasing mid-iteration is safe. Note `new`/`delete` happen
 note-on/off — a known wart in a real-time path.
 
 **Audio path per buffer.** `SynthEngine::update` ticks all envelopes and reaps voices whose DCA
-envelope went inactive, advances every channel's LFO, configures both interpolators once, and then
-calls `Voice::render` per voice. **The engine manages voices and MIDI; it does not synthesise** —
-everything per-voice is in `voice.cxx`, which is why that file is more than twice the size of
-`engine.cxx`. Keep it that way.
+envelope went inactive, advances every channel's LFO, and then calls `Voice::render` per voice.
+**The engine manages voices and MIDI; it does not synthesise** — everything per-voice is in
+`voice.cxx`, which is why that file is more than twice the size of `engine.cxx`. Keep it that way.
 
 `Voice::render` computes the DCA level (chaining 15-bit envelope × patch level × velocity × channel
-volume × expression × pan), works out the pitch modulation common to all three oscillators, renders
+volume × expression × pan), works out the pitch modulation common to all the oscillators, renders
 and mixes them, sets and applies the filter, and accumulates into the stereo `int32_t` buffer.
 `main.cxx`'s `audio_task()` then scales the accumulator into the `int16_t` output buffer — see the
 output stage below, which is not a plain shift any more.
 
-**Three oscillators per voice, and the tuning reaches them by two different routes.** Each `Osc` in
-`Patch` has a waveform, a level, and coarse and fine tuning. Coarse shifts the note before the table
-lookup — exact, since a semitone is a table entry, and unbounded within the keyboard. Fine goes
-through `frequency_modulate`, which reaches only an octave either way because that is all
-`power_table` covers, and so *could not carry coarse* even if it were convenient. Both are constant
-for the life of a note, so `Voice::note_on` folds them into `dco_step_base[]` and they cost nothing
-per buffer.
+**Three oscillators per voice, but only two `Osc` structures.** `Patch` holds `dco[NDCO]` with
+`NDCO` of 2 — the primary `dco[0]` and the auxiliary `dco[1]`, each with a waveform, a level, and
+coarse and fine tuning. The third is a **sub-oscillator**, and it is not an `Osc` at all: it *is*
+`dco[0]`, read a whole number of octaves lower, so it has no wave, no coarse and no fine of its own.
+`sub_level` sets it and `sub_octaves` says how far down, with 0 reading as 1.
+
+That sharing is the design rather than a simplification. The sub inherits `dco[0]`'s waveform and
+any detune, which is what stops a sub beating against its own parent, and it costs one phase
+accumulator, one step, one table pointer and one round of pitch modulation between the two of them.
+Registers are the resource that has decided every oscillator measurement here — see below.
+
+The tuning reaches the two tunable oscillators by two different routes. Coarse shifts the note
+before the table lookup — exact, since a semitone is a table entry, and unbounded within the
+keyboard. Fine goes through `frequency_modulate`, which reaches only an octave either way because
+that is all `power_table` covers, and so *could not carry coarse* even if it were convenient. Both
+are constant for the life of a note, so `Voice::note_on` folds them into `dco_step_base[]` and they
+cost nothing per buffer.
 
 Both are also **signed, with zero meaning no offset**, breaking the centred-on-64 convention the
 rest of `Patch` follows. Those are 7-bit values arriving over the wire; these are preset-only
@@ -291,27 +335,89 @@ fields, and the centred form has a nasty property in a POD full of designated in
 neutral value is not zero, so an omitted field is a large detune rather than none. See the list of
 fields further down that share that hazard.
 
-**Two interpolators, not one, and that is what makes three oscillators affordable.** `interp0`
-alone meant one pass over the buffer per oscillator, with every pass after the first a
-read-modify-write to add itself to what was already there. `interp1` was sitting unused on core 1,
-so a pair of oscillators now share a single pass with one interpolator each. The mix scales with how
-many are actually live — an oscillator at zero level is skipped, not multiplied by nothing:
+**Noise is a fourth waveform, and only `dco[1]` may use it.** `NOISE` is not a table: the phase
+accumulator is run as an LCG (`p = p * 1664525 + 1013904223`) and the sample is taken from its high
+bits, so extracting one costs the same shift a table index would. Restricting it to the auxiliary
+keeps the generator off the primary pitch path — the primary carries the sub, which needs a real
+phase — and turns "which oscillator is noise" into a single test rather than a case analysis. Noise
+advances by a different rule from the other two, so it cannot share a loop with them.
 
-| live | passes | |
+This is the one thing subtractive synthesis needed and did not have. Breath, fret noise, seashore,
+applause and gunshot *are* noise, and a drum map on channel 10 is now reachable in principle, though
+none exists yet.
+
+**No interpolator, and that was measured rather than assumed.** `interp0` and `interp1` in
+blend/wave-lookup mode used to be the oscillators. They are gone, `hardware_interp` is off the link
+line, and `Voice::oscillators` indexes the tables directly. Three findings, in the order they
+arrived:
+
+- **Saw needs no table.** `saw_table[i]` is `32767 - i*32` and nothing else, so a saw is an exact
+  function of the phase. That saves the read and — the part that actually mattered — the *pointer*.
+- **The interpolator's one advantage is holding phase and step off the register file**, and that is
+  worth less than not needing a table pointer at all. It also capped at two units, which forced a
+  second pass over the buffer for a third oscillator.
+- **Register pressure, not instruction count, governs this loop.** Two of the measurements below go
+  the opposite way to their instruction counts.
+
+`Voice::oscillators` is consequently a `MIX` macro instantiated **twelve** times: `dco[0]` computed
+or read (2) × sub present or not (2) × an auxiliary that is a table, a computed saw, or noise (3).
+Each variant is a single pass with everything resolved at compile time; the shape is chosen once per
+buffer. It is about 100 lines against the 209 the three experimental paths took.
+
+Measured at 64 voices against the 6,000,000 ns deadline, on the two patches that bracket the work —
+an all-saw test and a three-oscillator organ:
+
+| | saw test | organ test |
 |---|---|---|
-| 1 | 1 | scales inline |
-| 2 | 1 | one interpolator each, the wide accumulator never touched |
-| 3 | 2 | pair in one pass, third reads it back and scales on the way out |
+| two interpolators, one pass per pair | 5.03M | 5.03M |
+| direct indexing, table pointers not deduplicated | 5.19M | — |
+| direct indexing, deduplicated | 4.99M | — |
+| **direct indexing + computed saw** | **4.57M** | **5.02M** |
 
-Measured at 64 voices against the 6,000,000 ns deadline: one oscillator 3.92M (65.3%), three at a
-pass each ~5.9M (~98%), three paired across the two interpolators **5.01M (83.5%)**. So three cost
-28% over one rather than tripling anything — the filter, the DCA chain and the accumulate are
-unchanged — and the pairing takes 15% back off the naive form. Note the margin is now much narrower
-than it was: about 1M ns spare where there used to be 2.4M.
+So the interpolator cost 9.2% on saw-heavy material and nothing on an organ, which is the expected
+shape: the organ is all sines and gains only the deduplication. Note the third row — deduplicating
+the pointers when a patch's oscillators share a table took 4% off, which is why the second row is
+*worse* than the interpolator it replaced and the fourth is better.
 
 One oscillator at full level comes out at full scale to within 0.07 dB, and three at full level
 reach three times that and saturate. That is the conventional arrangement — levels are independent,
 and a patch wanting all three loud turns them down.
+
+**`saw_table`'s contents are now dead.** A saw is computed for either oscillator, so nothing
+dereferences it. It is still built because `waves[]` is indexed by wave number and the entry has to
+be a valid pointer — 4 KB of RAM reclaimable by pointing `waves[SAW]` at another table, which has
+not been done.
+
+**`dco[1]` has an amplitude envelope of its own**, the fourth per-voice ADSR, set by the four
+`aux_env_*` rates and applied in `Voice::oscillators` as `l1 = (l1 * aux_env->level()) >> 15`.
+Unlike the other three there is no depth field to test, so **all four rates zero is the sentinel for
+"follow the DCA"** — safe because it otherwise describes the slowest possible attack into silence,
+which no patch wants. The envelope is only allocated when one of them is set, so `v.aux_env` being
+null is the normal case and every use is guarded, exactly as `dcf_env` is.
+
+Note it cannot end a note the way the DCA envelope can: it silences one oscillator and the voice
+plays on. Nothing checks `aux_env->active()`.
+
+**This is the one modulation the filter cannot stand in for**, which is the whole reason it exists.
+A downward filter envelope darkens a partial as a note decays, and that covers the ordinary case.
+It cannot duck *noise*, which is broadband — a lowpass takes the tone with it in the same
+proportion — and it cannot fade an oscillator tuned *below* the primary at all. 20 of the 128
+presets use one: the pipes, whose breath is a chiff at the onset; the electric pianos and
+struck bars, whose partial is a tine or a mallet click; and Synth Drum and Gunshot, where a noise
+crack sits over a pitched body that outlasts it.
+
+**Zero sustain is usually what a transient wants, and getting that wrong is audible.** The pipes
+first shipped with sustains of 35–55%, which is not a chiff — it is a hiss under the whole note, on
+a family whose DCA sustains at 112. At `s = 0` the decay ends in the `off` phase and the noise is
+genuinely gone. Remember `d` is a *rate*: a larger number is a shorter transient.
+
+The cost is close to nothing, and that is why it was worth adding. Every level here is already
+block-rate — `dca_env->level()` is read once per buffer and `l1` is a constant across the sample
+loop — so this is one `update()` and one multiply per voice per buffer, both outside the inner
+loops, where all non-sample-loop work has been measured at about 1% of the voice budget. Plus about
+24 bytes of heap per sounding voice that has one. The limitation that comes with block rate is that
+a transient shorter than about 20 ms steps in 6 ms increments and could zipper; that is a property
+the DCA envelope has always had, but noise transients are where it would first be heard.
 
 **The output stage scales for how voices actually sum, and limits what is left.** It used to shift
 down by 6, which is what 64 voices at full level need *in phase*. They are never in phase: voices
@@ -454,10 +560,10 @@ and `buf` is `int16_t*`, so they may alias and the compiler does reload both eve
 hoisting measured two instructions a sample worse, because on M0+ the extra live values land in
 high registers and every `muls` then needs a `mov` down to a low one.
 
-**Hardware used directly:** `interp0` *and* `interp1` in blend/wave-lookup mode are the wavetable
-oscillators (shift 15, mask `wave_shift`, raw add) — `Voice::oscillators` loads the step/base/accum
-and pops samples, using both so that a pair of oscillators can share one pass; `hw_divider` for bend
-scaling; SysTick as a cycle counter via `bench.h` (`bench_delta` handles the 24-bit wrap).
+**Hardware used directly:** `hw_divider` for bend scaling, and SysTick as a cycle counter via
+`bench.h` (`bench_delta` handles the 24-bit wrap). The interpolators were the third item here and
+are no longer used at all — see the oscillator section above for the measurements that retired them,
+and note that `hardware_interp` came off the `target_link_libraries` list with them.
 
 The LCD shows three lines: min and max **nanoseconds**, then the voice count as `now/peak`.
 `SynthEngine::update` returns how many voices it rendered — the pool iterator only visits voices in
@@ -489,9 +595,9 @@ these are GPIO numbers, not header pin numbers; the pins carrying the I2S signal
 recording because the datasheet only rates RP2350 to 150 MHz, and because a silent fallback was one
 of the early suspects when the port would not boot. It wasn't that.
 
-All three survive the move to RP2350: the interpolators exist on both, and `hardware_divider` is
-real silicon on RP2040 but a software emulation (`divider.c`, selected by the `else()` in its
-`CMakeLists.txt`) on RP2350, with the same API — so nothing had to change. The one place the two
+Both survive the move to RP2350: `hardware_divider` is real silicon on RP2040 but a software
+emulation (`divider.c`, selected by the `else()` in its `CMakeLists.txt`) on RP2350, with the same
+API — so nothing had to change. The one place the two
 parts genuinely differ is the multiplier: ARMv6-M has only `MULS`, 32×32→32, while the M33 has a
 single-cycle `UMULL`/`SMULL`. Three places now depend on the wide one, and none of them would be
 safe to move back to RP2040 unchanged:
@@ -522,19 +628,33 @@ tuning.** Organs, strings, ensembles, brass, basses, reeds, leads and pads are w
 synthesis is for and come out well. Pianos, guitars and chromatic percussion are recognisable but
 plainly synthetic.
 
-**The hard limit is that there is no noise source.** Fret noise, breath, seashore, applause and
-gunshot *are* noise; three tuned oscillators can approximate the envelope and the register and
-nothing else, so the last two families are gestures. The same gap is why there is no drum map on
-channel 10 — a snare or a hi-hat is not reachable from here at all, and it is also what leaves the
-flutes without breath. Adding noise is the single change that would move the most, and it would
-want to be a fourth oscillator mode rather than a fourth wavetable, since noise does not have a
-phase to accumulate.
+**Sixteen patches use the noise generator**, which is what the last family had been waiting for.
+The pipes (73–80) carry it as breath, and the effects (121–128) as most of the sound: Guitar Fret
+Noise, Breath Noise, Seashore and Applause are noise plus a low-level pitched primary, kept only
+because `arrange()` requires one. Gunshot is a −24-semitone thump under noise, Helicopter a −36
+square rotor under it. Bird Tweet and Telephone Ring stay tonal, being pitched gestures rather than
+noise. In percussion, Synth Drum gets a crack over the body and Reverse Cymbal is near-pure noise
+through the upward filter sweep it already had.
+
+The levels were halved once by ear after the first attempt, and note *how*: the generator's
+`P()` renormalises the oscillators that survive the two-oscillator truncation, so halving the source
+number pushes it straight back up. The values in the script are solved so the *emitted* level lands
+where it should, not simply halved.
+
+`arrange()` enforces the invariants the engine assumes: at most one noise oscillator per patch, it
+goes in the auxiliary slot, and a pitched primary has to remain. That last one is why Seashore and
+Applause carry a token primary at level 8–10 rather than none.
+
+**A drum map on channel 10 is now reachable and does not exist.** It was impossible before — a
+snare or a hi-hat is not approachable with tuned oscillators — and is the obvious next thing.
 
 **Two thirds of the patches use two oscillators, not three**, and that is a budget decision as much
-as a musical one: one oscillator costs 3.92M of the 6M deadline at 64 voices and three cost 5.01M,
-so a flute that is nearly a sine should not pay for a detuned stack it never uses. Dropping one
+as a musical one: one oscillator costs 3.92M of the 6M deadline at 64 voices and three cost about
+5.0M, so a flute that is nearly a sine should not pay for a stack it never uses. Dropping one
 rebalances the levels that remain, so nothing gets quieter. Three are kept where the detune *is* the
-sound — organs, strings, ensembles, brass, pads, effects.
+sound — organs, strings, ensembles, brass, pads, effects. Since the third oscillator became a sub
+rather than a free `Osc`, a patch that wants a third *independent* pitch has to spend `dco[1]` on
+it: the organ fifths do exactly that.
 
 **Strings, brass, reeds, pipes and leads use the channel LFO phase; ensembles deliberately do not.**
 One player has one vibrato, so the notes of a chord should move together. A section genuinely has
@@ -545,7 +665,12 @@ Worth knowing before retuning: the patches are systematic rather than heard. The
 base plus per-instrument tweaks, and were corrected twice by measurement — once when the mod wheel
 turned out to be reaching four semitones where half a semitone is normal, and once when the LFO to
 cutoff was sweeping three and a half octaves. They have not been tuned by ear the way the filter
-curves were.
+curves were. The two exceptions are the noise levels and the pipes' breath envelopes, both of which
+were corrected on hardware by listening.
+
+`auxenv(a, d, s, r)` in the generator is the helper for the fourth envelope, and the comment on it
+is the place to record what a second oscillator is *for* in a given patch — a detune or a fifth has
+to track the note, a transient must not.
 
 ## USB audio output
 
@@ -705,7 +830,13 @@ percentages are not directly comparable — divide by the sample count to compar
 | | bench_max | of deadline | ns/sample |
 |---|---|---|---|
 | float, 13.7 KB tables, 256 @ 44.1 kHz | 3,300,000 ns | 56.8% | 12,891 |
-| **+ filter envelope + output limiter, 288 @ 48 kHz** | **3,641,612 ns** | **60.7%** | **12,644** |
+| + filter envelope + output limiter, 288 @ 48 kHz | 3,641,612 ns | 60.7% | 12,644 |
+
+Those are all **one** oscillator. The figures in the oscillator section — 4.57M on saw, 5.02M on a
+three-oscillator organ — are the same firmware with a full patch, and are the ones to read against
+the 6,000,000 ns deadline when judging how much room is left. They predate the aux envelope, which
+has not been measured; it is one `update()` and one multiply per voice per buffer, so it should sit
+inside the noise, but that is reasoning rather than a measurement.
 
 Per sample that is unchanged inside measurement noise, which is the expected result and worth
 knowing before optimising anything: the filter envelope costs one `update()` and a little
@@ -736,8 +867,9 @@ roughly twice the 58.6% of the deadline that 64 currently measures, which does n
 filter ever became optional per patch, the old number would come back within reach for patches that
 switch it off.
 
-Raising `nv` costs almost nothing in RAM — 44 bytes of `.bss` per voice, plus about 90 bytes of heap
-per *sounding* voice for its two envelopes and filter — so the limit is CPU, not memory. Every voice
+Raising `nv` costs almost nothing in RAM — 44 bytes of `.bss` per voice, plus roughly 90–140 bytes
+of heap per *sounding* voice for its filter and however many of its four envelopes the patch
+actually asked for — so the limit is CPU, not memory. Every voice
 the pool holds costs a full render and filter pass per buffer, at roughly 65 instructions a sample,
 so 64 voices all sounding is on the order of 180M instructions a second against 250 MHz. Read the
 LCD before trusting a larger number: the third line gives the peak voice count and the second gives

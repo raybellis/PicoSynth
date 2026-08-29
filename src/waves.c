@@ -6,10 +6,17 @@
 // Only the sine needs real maths; the other three are arithmetic.
 //
 // Unlike the tables in tables.c, these are read once per *sample* per
-// voice, through interp0.  That is why they stay in RAM rather than
-// being made const: the access pattern is scattered across the table
-// at whatever phase each voice happens to be at, which is the worst
-// case for an XIP cache.
+// voice, indexed directly by phase in Voice::oscillators.  That is why
+// they stay in RAM rather than being made const: the access pattern is
+// scattered across the table at whatever phase each voice happens to be
+// at, which is the worst case for an XIP cache.
+//
+// Note that saw_table's *contents* are now dead: Voice::oscillators
+// derives a saw from the phase accumulator for either oscillator, so
+// nothing dereferences it.  It is still built because waves[] is
+// indexed by wave number and the entry has to be a valid pointer -
+// 4 KB of RAM that could be reclaimed by pointing waves[SAW] at
+// another table, which has not been done.
 
 #include <math.h>
 #include <stdint.h>

@@ -1,6 +1,6 @@
 #include <cstring>
 
-#include "hardware/interp.h"
+#include "pico.h"
 
 #include "voice.h"
 #include "data.h"
@@ -49,7 +49,6 @@ static inline uint8_t cc_offset(uint8_t base, uint8_t cc)
 // one buffer of mono samples, and the wider accumulator the oscillator
 // mix needs before it is scaled back into it
 static int16_t				mono[BUFFER_SIZE];
-static int32_t				acc[BUFFER_SIZE];
 
 //--------------------------------------------------------------------+
 // Per-voice state
@@ -65,6 +64,7 @@ void Voice::init()
 	dca_env = nullptr;
 	dco_env = nullptr;
 	dcf_env = nullptr;
+	aux_env = nullptr;
 	filter = nullptr;
 }
 
@@ -76,109 +76,117 @@ Voice::Voice()
 // runs from RAM - this is the per-sample oscillator loop, called for
 // every active voice on every buffer.
 //
-// Each oscillator is scaled by its own 7-bit level and the three are
-// summed, so one at full level comes out at 32511 - full scale to
-// within 0.07 dB - and three at full level reach three times that and
-// saturate.  That is the conventional arrangement: levels are
-// independent, and a patch that wants all three loud turns them down.
+// Three voices from two accumulators.  dco[0] and the sub share one,
+// because the sub *is* dco[0] an octave or more down: the accumulator
+// runs at the sub's rate and dco[0] is read from it shifted up, since a
+// slower phase cannot be derived from a faster one but the reverse is
+// free.  That saves a phase, a step, a table pointer and a round of
+// pitch modulation, and registers have decided every measurement here.
 //
-// An oscillator at zero level is skipped rather than multiplied by
-// nothing, which is what keeps a one-oscillator patch costing about
-// what it did before there were three.  A single active oscillator
-// avoids the wide accumulator altogether and scales as it goes.
+// No interpolator.  Measured against it: computed saw was 11.9% faster
+// and direct table indexing level, once the pointers were deduplicated.
+// Its one advantage - holding phase and step off the register file -
+// is worth less than not needing a table pointer at all, and it came
+// with a cap of two units that forced a second pass over the buffer.
 void __not_in_flash_func(Voice::oscillators)(int16_t* out, size_t n)
 {
-	// hand one oscillator's phase to an interpolator and take it back.
-	// Both are configured once per buffer by SynthEngine::update, so
-	// this is only the three registers that differ per oscillator
-	auto load = [this](interp_hw_t* in, int d) {
-		in->base[0]  = dco_step[d];
-		in->base[2]  = (uint32_t)waves[patch->dco[d].wave];
-		in->accum[0] = dco_pos[d];
-	};
+	const Osc& o0 = patch->dco[0];
+	const Osc& o1 = patch->dco[1];
 
-	auto save = [this](interp_hw_t* in, int d) {
-		dco_pos[d] = in->accum[0] & (WAVE_MAX - 1);
-	};
+	const int32_t l0 = o0.level;
+	const int32_t ls = patch->sub_level;
 
-	int active = 0;
-
-	for (int d = 0; d < NDCO; ++d) {
-		if (patch->dco[d].level) ++active;
+	// dco[1]'s level, scaled by its own envelope when it has one.  This
+	// is a block-rate value like every other level here - it stays a
+	// constant across the sample loops below, so the whole feature costs
+	// one multiply per voice per buffer and nothing in the inner loop
+	int32_t l1 = o1.level;
+	if (aux_env) {
+		l1 = (l1 * aux_env->level()) >> 15;
 	}
 
-	if (active == 0) {
+	if (!l0 && !l1 && !ls) {
 		memset(out, 0, n * sizeof(int16_t));
 		return;
 	}
 
-	// which oscillators are live, in order
-	int idx[NDCO];
-	int k = 0;
-	for (int d = 0; d < NDCO; ++d) {
-		if (patch->dco[d].level) idx[k++] = d;
+	// the shared accumulator runs at the sub's rate when there is one
+	const int k = ls ? (patch->sub_octaves ? patch->sub_octaves : 1) : 0;
+
+	uint32_t p0 = dco_pos[0], s0 = dco_step[0] >> k;
+	uint32_t p1 = dco_pos[1], s1 = dco_step[1];
+
+	const int16_t* w0 = waves[o0.wave];
+	const int16_t* w1 = waves[o1.wave & 3];
+
+	constexpr int SH = 32 - WAVE_SHIFT;
+
+	// Saw is an exact function of the phase - the table is
+	// 32767 - i*32 and nothing else - so a saw oscillator needs no table
+	// read and, more to the point, no table pointer.  When dco[0] is a
+	// saw its sub is one too, since the sub *is* dco[0], and the pair
+	// then costs no pointer between them.
+	//
+	// The shapes are chosen once per buffer: dco[0] computed or read,
+	// the sub present or not, and an auxiliary that is a table, a saw or
+	// the noise generator.  Noise advances its phase by a different rule
+	// so it cannot share a loop with the other two.
+	const bool saw0 = (o0.wave == SAW);
+	const bool noise = (o1.wave == NOISE);
+	const bool saw1 = (o1.wave == SAW);
+
+#define P0T		(w0[(p0 << k) >> SH] * l0)
+#define P0S		(((int32_t)(p0 << k) >> 16) * l0)
+#define SBT		+ (w0[p0 >> SH] * ls)
+#define SBS		+ (((int32_t)p0 >> 16) * ls)
+#define SB0
+#define AXT		+ (w1[p1 >> SH] * l1)
+#define AXS		+ (((int32_t)p1 >> 16) * l1)
+#define STEP0	p0 += s0;
+#define STEPT	p1 += s1;
+
+	// an LCG, whose high bits are the usable ones - so extracting a
+	// sample costs the same shift a table index would have, and the saw
+	// extraction serves for both
+#define STEPN	p1 = p1 * 1664525u + 1013904223u;
+
+#define MIX(A, B, SA, C) \
+	for (size_t i = 0; i < n; ++i) { \
+		STEP0 SA out[i] = (int16_t)clamp16((A B C) >> 7); \
 	}
 
-	if (active == 1) {
-		const Osc& o = patch->dco[idx[0]];
-
-		load(interp0, idx[0]);
-
-		for (size_t i = 0; i < n; ++i) {
-			out[i] = (int16_t)((*(int16_t*)interp0->pop[2] * o.level) >> 7);
-		}
-
-		save(interp0, idx[0]);
-		return;
+	if (saw0 && ls) {
+		if (noise)     { MIX(P0S, SBS, STEPN, AXS) }
+		else if (saw1) { MIX(P0S, SBS, STEPT, AXS) }
+		else           { MIX(P0S, SBS, STEPT, AXT) }
+	} else if (saw0) {
+		if (noise)     { MIX(P0S, SB0, STEPN, AXS) }
+		else if (saw1) { MIX(P0S, SB0, STEPT, AXS) }
+		else           { MIX(P0S, SB0, STEPT, AXT) }
+	} else if (ls) {
+		if (noise)     { MIX(P0T, SBT, STEPN, AXS) }
+		else if (saw1) { MIX(P0T, SBT, STEPT, AXS) }
+		else           { MIX(P0T, SBT, STEPT, AXT) }
+	} else {
+		if (noise)     { MIX(P0T, SB0, STEPN, AXS) }
+		else if (saw1) { MIX(P0T, SB0, STEPT, AXS) }
+		else           { MIX(P0T, SB0, STEPT, AXT) }
 	}
 
-	// Two oscillators share one pass, one interpolator each.  Splitting
-	// them across two passes would mean writing the first to memory and
-	// reading it back to add the second - a read-modify-write per sample
-	// that buys nothing, since the second interpolator is sitting idle.
-	const Osc& a = patch->dco[idx[0]];
-	const Osc& b = patch->dco[idx[1]];
+#undef P0T
+#undef P0S
+#undef SBT
+#undef SBS
+#undef SB0
+#undef AXT
+#undef AXS
+#undef STEP0
+#undef STEPT
+#undef STEPN
+#undef MIX
 
-	load(interp0, idx[0]);
-	load(interp1, idx[1]);
-
-	if (active == 2) {
-		// and with only two, the scaling folds into the same pass and
-		// the wide accumulator is never touched at all
-		for (size_t i = 0; i < n; ++i) {
-			int32_t s = *(int16_t*)interp0->pop[2] * a.level
-			          + *(int16_t*)interp1->pop[2] * b.level;
-			out[i] = (int16_t)clamp16(s >> 7);
-		}
-
-		save(interp0, idx[0]);
-		save(interp1, idx[1]);
-		return;
-	}
-
-	for (size_t i = 0; i < n; ++i) {
-		acc[i] = *(int16_t*)interp0->pop[2] * a.level
-		       + *(int16_t*)interp1->pop[2] * b.level;
-	}
-
-	save(interp0, idx[0]);
-	save(interp1, idx[1]);
-
-	// the third reads that back once, and scales on the way out, so
-	// there is still only one pass that touches acc[] twice
-	const Osc& c = patch->dco[idx[2]];
-
-	load(interp0, idx[2]);
-
-	for (size_t i = 0; i < n; ++i) {
-		int32_t s = acc[i] + *(int16_t*)interp0->pop[2] * c.level;
-
-		// saturate rather than wrap, so an overdriven mix flattens
-		// instead of inverting - the same reasoning as the filter output
-		out[i] = (int16_t)clamp16(s >> 7);
-	}
-
-	save(interp0, idx[2]);
+	dco_pos[0] = p0;
+	dco_pos[1] = p1;
 }
 
 // One voice, one buffer, accumulated into the stereo output.
@@ -401,6 +409,16 @@ void Voice::note_on(uint8_t _chan, uint8_t _note, uint8_t _vel)
 		dcf_env->gate_on();
 	}
 
+	// and dco[1]'s own, which exists only if the patch asked for one.
+	// there is no depth field to test here as there is for the other
+	// two, so all four parameters zero is the sentinel for "follow the
+	// DCA" - safe because it otherwise describes the slowest possible
+	// attack into silence, which no patch wants
+	if (p.aux_env_a || p.aux_env_d || p.aux_env_s || p.aux_env_r) {
+		aux_env = new ADSR(p.aux_env_a, p.aux_env_d, p.aux_env_s, p.aux_env_r);
+		aux_env->gate_on();
+	}
+
 	// set up the oscillators.  coarse and fine are both fixed for the
 	// life of the note, so they are folded into the base step here and
 	// cost nothing per buffer afterwards
@@ -425,7 +443,10 @@ void Voice::note_on(uint8_t _chan, uint8_t _note, uint8_t _vel)
 			frequency_modulate(step, (int16_t)((o.fine * 8192) / (12 * 64)));
 		}
 
-		dco_step_base[i] = step;
+		// scaled to a full 32-bit accumulator, which wraps of its own
+		// accord - the phase used to be 16.16 inside WAVE_MAX and needed
+		// masking, which the interpolator did in hardware
+		dco_step_base[i] = step << 5;
 		dco_pos[i] = 0;
 	}
 
@@ -445,6 +466,10 @@ void Voice::note_off()
 
 	if (dcf_env) {
 		dcf_env->gate_off();
+	}
+
+	if (aux_env) {
+		aux_env->gate_off();
 	}
 
 	steal = true;		// voice may now be stolen
@@ -490,6 +515,7 @@ void VoicePool::release(Voice& v)
 	delete v.dca_env;
 	delete v.dco_env;
 	delete v.dcf_env;
+	delete v.aux_env;
 	delete v.filter;
 
 	// resets the pointers above, and marks the voice free

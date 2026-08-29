@@ -17,12 +17,14 @@
 // costs nothing; fine goes through frequency_modulate, which can only
 // reach an octave either way - the whole of power_table - and so could
 // not carry coarse even if it were convenient.
-// indices into waves[], named so a preset says what it sounds like
+// indices into waves[], named so a preset says what it sounds like.
+// NOISE is not a table - it is generated - and only dco[1] may use it
 enum {
 	SINE	= 0,
 	SQUARE	= 1,
 	SAW		= 2,
 	TRI		= 3,
+	NOISE	= 4,
 };
 
 typedef struct {
@@ -35,11 +37,44 @@ typedef struct {
 
 } Osc;
 
-#define NDCO			3
+// the two freely-tunable oscillators.  The sub is a third voice but not
+// a third Osc - it has no tuning of its own
+#define NDCO			2
 
 typedef struct {
 
+	// dco[0] is the primary and dco[1] the auxiliary.  Only dco[1] may
+	// be NOISE, which keeps the generator off the primary pitch path
+	// and turns "which oscillator is noise" into a single test
 	Osc					dco[NDCO];
+
+	// The sub-oscillator: dco[0] again, a whole number of octaves down.
+	// It has no wave, no coarse and no fine of its own - it *is* dco[0],
+	// read at a lower rate, so it shares the waveform and inherits any
+	// detune, which is what stops a sub beating against its own parent.
+	//
+	// That sharing is the point rather than a simplification: one phase
+	// accumulator, one step, one table pointer and one round of pitch
+	// modulation serve both, and registers are the resource that has
+	// decided every oscillator measurement here.
+	uint8_t				sub_level;		// 0 for no sub
+	uint8_t				sub_octaves;	// below dco[0]; 0 reads as 1
+
+	// An amplitude envelope for dco[1] alone, so the auxiliary can have
+	// a contour of its own rather than following the DCA.  All four zero
+	// means it does follow the DCA, which is the common case and costs
+	// nothing - the envelope is only created when one of them is set.
+	//
+	// This is the one modulation the filter cannot stand in for.  A
+	// downward filter envelope will darken a partial as a note decays,
+	// but noise is broadband, so a lowpass ducks it and the tone in the
+	// same proportion; and nothing a lowpass does can fade an oscillator
+	// tuned *below* the primary.  The breath in a flute is a chiff at
+	// the onset settling to a quiet hiss, and that shape needs this
+	uint8_t				aux_env_a;
+	uint8_t				aux_env_d;
+	uint8_t				aux_env_s;
+	uint8_t				aux_env_r;
 
 	uint8_t				dca_env_level;
 	uint8_t				dca_env_a;

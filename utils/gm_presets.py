@@ -13,14 +13,15 @@
 # Hz - and converted here, so that the C says what was meant rather than
 # what the tables happen to index.
 
-import math, sys
+import math, sys, itertools
 
 Q_LEN, STEPS, BUF, FS = 128, 16, 288, 48000
 NOTE_MAX = 69 + 12 * math.log2((FS / 6.0) / 440.0)
 N_EXP = math.log(90.0 / NOTE_MAX) / math.log(64.0 / (Q_LEN - 1))
 
-SINE, SQUARE, SAW, TRI = 0, 1, 2, 3
-WAVE_NAME = {SINE: "SINE", SQUARE: "SQUARE", SAW: "SAW", TRI: "TRI"}
+SINE, SQUARE, SAW, TRI, NOISE = 0, 1, 2, 3, 4
+WAVE_NAME = {SINE: "SINE", SQUARE: "SQUARE", SAW: "SAW", TRI: "TRI",
+             NOISE: "NOISE"}
 
 
 def cut(note):
@@ -41,8 +42,69 @@ def lfo(hz):
 # neutral for every field except the levels, which every base sets.
 # ---------------------------------------------------------------------
 
+def auxenv(a, d, s, r):
+    """dco[1]'s own amplitude contour, as four ADSR rates.
+
+    All four zero - the default - means the auxiliary follows the DCA,
+    which is what most patches want: a detune or a fifth has to track
+    the note or the patch comes apart mid-way through it.  Set them
+    where the second oscillator is a *transient* rather than part of
+    the steady tone: the breath in a pipe, the tine in an electric
+    piano, the crack over a drum's body.  Nothing else can do this -
+    the filter envelope darkens a partial as a note decays, but noise
+    is broadband, so a lowpass ducks it and the tone together.
+    """
+    return dict(aux_env_a=a, aux_env_d=d, aux_env_s=s, aux_env_r=r)
+
+
 def osc(wave, level, coarse=0, fine=0):
     return dict(wave=wave, level=level, coarse=coarse, fine=fine)
+
+
+def arrange(dco):
+    """Split three oscillators into (primary, auxiliary, sub).
+
+    The sub has no tuning of its own - it is the primary read an octave
+    or more down - so the pair that becomes primary+sub has to share a
+    waveform and a detune and sit a whole number of octaves apart.  Any
+    of the three can be the auxiliary, so try each assignment rather
+    than assuming the order they happen to be written in.
+    """
+    live = [d for d in dco if d["level"]]
+
+    # noise has no pitch, so it can be neither the primary nor the sub -
+    # it is always the auxiliary, which is why only dco[1] may carry it
+    noise = [d for d in live if d["wave"] == NOISE]
+    if noise:
+        assert len(noise) == 1, "only one noise oscillator per patch"
+        rest = [d for d in live if d["wave"] != NOISE]
+        assert rest, "a noise patch still needs a pitched primary"
+        if len(rest) == 1:
+            return rest[0], noise[0], None, 0
+        drop = rest[0]["coarse"] - rest[1]["coarse"]
+        oct_ = max(1, round(drop / 12)) if drop > 0 else 1
+        return rest[0], noise[0], rest[1], oct_
+
+    if len(live) < 3:
+        return live[0], (live[1] if len(live) > 1 else None), None, 0
+
+    for i, j in itertools.permutations(range(3), 2):
+        drop = live[i]["coarse"] - live[j]["coarse"]
+        if (live[i]["wave"] == live[j]["wave"]
+                and live[i]["fine"] == live[j]["fine"]
+                and drop > 0 and drop % 12 == 0):
+            aux = live[3 - i - j]
+            return live[i], aux, live[j], drop // 12
+
+    # No natural pair, so make one: keep the first two as written and
+    # turn the third into a genuine sub of the primary.  It loses any
+    # wave or detune of its own, which it was never entitled to - the
+    # sub *is* the primary, read lower - and in every case here that
+    # was an arbitrary choice rather than a musical requirement.
+    pri, aux, third = live[0], live[1], live[2]
+    drop = pri["coarse"] - third["coarse"]
+    oct_ = max(1, round(drop / 12)) if drop > 0 else 1
+    return pri, aux, third, oct_
 
 
 # struck: fast attack, decays away, filter closing behind it
@@ -56,6 +118,7 @@ PIANO = dict(
 # struck metal and wood: no sustain at all, bright, rings out
 BELL = dict(
     _n=2, dco=[osc(SINE, 74), osc(SINE, 34, coarse=19), osc(TRI, 19, coarse=12)],
+    **auxenv(127, 64, 24, 60),
     dca_env_level=127, dca_env_a=127, dca_env_d=34, dca_env_s=0, dca_env_r=44,
     dcf_freq=cut(112), dcf_reso=40, dcf_vel=22, dcf_track=90,
 )
@@ -122,8 +185,11 @@ REED = dict(
 
 # pipes: nearly a sine, and without a noise source that is all the
 # breath we can manage
+# a flute is a sine with air behind it, and the air is the half of that
+# which could not be reached before
 PIPE = dict(
-    _n=2, dco=[osc(SINE, 74), osc(TRI, 36), osc(SINE, 16, coarse=12)],
+    _n=2, dco=[osc(SINE, 96), osc(NOISE, 7), osc(SINE, 16, coarse=12)],
+    **auxenv(127, 127, 0, 60),
     dca_env_level=116, dca_env_a=26, dca_env_d=20, dca_env_s=112, dca_env_r=28,
     dcf_freq=cut(98), dcf_reso=34, dcf_vel=20, dcf_track=60,
     lfo_global=1,
@@ -172,9 +238,11 @@ PERC = dict(
     dcf_env_level=-20, dcf_env_a=127, dcf_env_d=40, dcf_env_s=0, dcf_env_r=60,
 )
 
-# these want noise, and there isn't any.  gestures only
+# these wanted noise and there wasn't any; now there is.  A pitched
+# primary stays because most of them are noise *plus* something - a
+# gunshot has a thump under it, a helicopter a rotor
 SFX = dict(
-    dco=[osc(SAW, 54), osc(SQUARE, 40, fine=23), osc(TRI, 30, coarse=-19)],
+    _n=2, dco=[osc(SAW, 18), osc(NOISE, 52), osc(SAW, 0)],
     dca_env_level=110, dca_env_a=90, dca_env_d=30, dca_env_s=60, dca_env_r=40,
     dcf_freq=cut(84), dcf_reso=70, dcf_track=30,
     lfo_wave=SINE, lfo_freq=lfo(7.0), lfo_dcf=8, lfo_dca=36,
@@ -240,11 +308,11 @@ GM = [
     ("Electric Grand Piano",   P(PIANO, dco=[osc(SAW, 56), osc(SINE, 54), None])),
     ("Honky-tonk Piano",       P(PIANO, dco=[osc(SAW, 58), osc(SAW, 52, fine=14), None])),
     ("Electric Piano 1",       P(PIANO, dco=[osc(SINE, 70), osc(SINE, 40, coarse=12), None],
-                                  dcf_freq=cut(100), dca_env_d=18, dca_env_s=24)),
+                                  **auxenv(127, 70, 20, 60), dcf_freq=cut(100), dca_env_d=18, dca_env_s=24)),
     ("Electric Piano 2",       P(PIANO, dco=[osc(SINE, 66), osc(TRI, 44, coarse=12), None],
-                                  dcf_freq=cut(104), dcf_reso=64, dca_env_s=28)),
+                                  **auxenv(127, 60, 24, 60), dcf_freq=cut(104), dcf_reso=64, dca_env_s=28)),
     ("Harpsichord",            P(PIANO, dco=[osc(SAW, 70), osc(SAW, 42, coarse=12), None],
-                                  dcf_freq=cut(108), dca_env_d=30, dca_env_s=0)),
+                                  **auxenv(127, 60, 30, 60), dcf_freq=cut(108), dca_env_d=30, dca_env_s=0)),
     ("Clavi",                  P(PIANO, dcf_reso=86, dcf_env_level=-24, dca_env_s=8)),
 
     # --- 9-16  Chromatic Percussion ------------------------------------
@@ -252,16 +320,16 @@ GM = [
     ("Glockenspiel",           P(BELL, dcf_freq=cut(118), dca_env_d=44)),
     ("Music Box",              P(BELL, dca_env_d=40, dca_env_r=52)),
     ("Vibraphone",             P(BELL, dco=[osc(SINE, 78), osc(SINE, 28, coarse=12), None],
-                                  dca_env_d=22, dca_env_r=54,
+                                  **auxenv(127, 50, 26, 60), dca_env_d=22, dca_env_r=54,
                                   lfo_wave=SINE, lfo_freq=lfo(4.5), lfo_dca=34)),
     ("Marimba",                P(BELL, dco=[osc(TRI, 78), osc(SINE, 30, coarse=19), None],
-                                  dca_env_d=42)),
+                                  **auxenv(127, 90, 0, 80), dca_env_d=42)),
     ("Xylophone",              P(BELL, dco=[osc(SQUARE, 62), osc(TRI, 40, coarse=12), None],
-                                  dca_env_d=54)),
+                                  **auxenv(127, 100, 0, 80), dca_env_d=54)),
     ("Tubular Bells",          P(BELL, dco=[osc(SINE, 62), osc(SINE, 44, coarse=19), None],
-                                  dca_env_d=14, dca_env_r=30)),
+                                  **auxenv(127, 30, 40, 40), dca_env_d=14, dca_env_r=30)),
     ("Dulcimer",               P(BELL, dco=[osc(SAW, 60), osc(TRI, 46, fine=9), None],
-                                  dca_env_d=30)),
+                                  **auxenv(0, 0, 0, 0), dca_env_d=30)),
 
     # --- 17-24  Organ --------------------------------------------------
     ("Drawbar Organ",          P(ORGAN)),
@@ -370,17 +438,19 @@ GM = [
                                   dcf_freq=cut(84))),
 
     # --- 73-80  Pipe ---------------------------------------------------
-    ("Piccolo",                P(PIPE, dco=[osc(SINE, 76, coarse=12), osc(TRI, 30, coarse=12), None],
+    ("Piccolo",                P(PIPE, dco=[osc(SINE, 76, coarse=12), osc(NOISE, 7), None],
                                   dcf_freq=cut(112))),
     ("Flute",                  P(PIPE)),
-    ("Recorder",               P(PIPE, dco=[osc(SINE, 80), osc(SQUARE, 22, coarse=12), None])),
-    ("Pan Flute",              P(PIPE, dco=[osc(SINE, 70), osc(TRI, 44, fine=6), None],
+    ("Recorder",               P(PIPE, dco=[osc(SINE, 80), osc(NOISE, 8), None])),
+    ("Pan Flute",              P(PIPE, dco=[osc(SINE, 70), osc(NOISE, 12), None], **auxenv(127, 110, 0, 60),
                                   lfo_pitch=6)),
-    ("Blown Bottle",           P(PIPE, dco=[osc(SINE, 82), osc(SINE, 24, coarse=19), None],
+    ("Blown Bottle",           P(PIPE, dco=[osc(SINE, 82), osc(NOISE, 10), None], **auxenv(127, 110, 0, 60),
                                   dcf_freq=cut(88))),
-    ("Shakuhachi",             P(PIPE, dco=[osc(TRI, 68), osc(SAW, 32), None], lfo_pitch=7)),
-    ("Whistle",                P(PIPE, dco=[osc(SINE, 96), None, None], dcf_freq=cut(114))),
-    ("Ocarina",                P(PIPE, dco=[osc(SINE, 88), osc(SINE, 20, coarse=12), None])),
+    ("Shakuhachi",             P(PIPE, dco=[osc(TRI, 68), osc(NOISE, 15), None],
+                                  **auxenv(127, 100, 0, 60), lfo_pitch=7)),
+    ("Whistle",                P(PIPE, dco=[osc(SINE, 96), None, None], dcf_freq=cut(114),
+                                  **auxenv(127, 127, 0, 60))),
+    ("Ocarina",                P(PIPE, dco=[osc(SINE, 88), osc(NOISE, 7), None])),
 
     # --- 81-88  Synth Lead ---------------------------------------------
     ("Lead 1 (square)",        P(LEAD, dco=[osc(SQUARE, 76), osc(SQUARE, 40, fine=7), None])),
@@ -460,12 +530,11 @@ GM = [
                                   dcf_freq=cut(66), dca_env_d=48,
                                   dco_env_level=-8, dco_env_a=127, dco_env_d=80,
                                   dco_env_s=0, dco_env_r=80)),
-    ("Synth Drum",             P(PERC, dco=[osc(SINE, 96, coarse=-12), None, None],
+    ("Synth Drum",             P(PERC, dco=[osc(SINE, 84, coarse=-12), osc(NOISE, 17)], **auxenv(127, 100, 0, 100),
                                   dcf_freq=cut(72), dca_env_d=52,
                                   dco_env_level=-19, dco_env_a=127, dco_env_d=70,
                                   dco_env_s=0, dco_env_r=70)),
-    ("Reverse Cymbal",         P(PERC, dco=[osc(SQUARE, 40), osc(SAW, 38, coarse=19, fine=17),
-                                            osc(SQUARE, 34, coarse=31)],
+    ("Reverse Cymbal",         P(PERC, dco=[osc(SQUARE, 16, coarse=19), osc(NOISE, 50)],
                                   dca_env_a=4, dca_env_d=60, dca_env_s=0, dca_env_r=100,
                                   dcf_freq=cut(70), dcf_env_level=44, dcf_env_a=4,
                                   dcf_env_d=60, dcf_env_s=0, dcf_env_r=100)),
@@ -473,30 +542,27 @@ GM = [
     # --- 121-128  Sound Effects ----------------------------------------
     ("Guitar Fret Noise",      P(SFX, dca_env_a=127, dca_env_d=80, dca_env_s=0, dca_env_r=80,
                                   dcf_freq=cut(100), lfo_dcf=0, lfo_dca=0)),
-    ("Breath Noise",           P(SFX, dco=[osc(SQUARE, 40, coarse=24), osc(SAW, 36, coarse=31, fine=29), None],
+    ("Breath Noise",           P(SFX, dco=[osc(SINE, 20, coarse=24), osc(NOISE, 58), None],
                                   dca_env_a=30, dca_env_d=30, dca_env_s=40, dca_env_r=30,
                                   dcf_freq=cut(108), dcf_reso=90)),
-    ("Seashore",               P(SFX, dco=[osc(SAW, 40, coarse=19), osc(SQUARE, 36, coarse=26, fine=19),
-                                           osc(SAW, 32, coarse=33, fine=-23)],
+    ("Seashore",               P(SFX, dco=[osc(SINE, 8, coarse=12), osc(NOISE, 62), None],
                                   dca_env_a=3, dca_env_s=110, dca_env_r=4,
                                   lfo_freq=lfo(0.25), lfo_dcf=16, lfo_dca=43)),
-    ("Bird Tweet",             P(SFX, dco=[osc(SINE, 90, coarse=24), None, None],
+    ("Bird Tweet",             P(SFX, dco=[osc(SINE, 90, coarse=24), osc(SINE, 0)],
                                   dca_env_a=127, dca_env_d=50, dca_env_s=0, dca_env_r=60,
                                   dco_env_level=19, dco_env_a=127, dco_env_d=40,
                                   dco_env_s=0, dco_env_r=60,
                                   lfo_freq=lfo(12.0), lfo_pitch=15, lfo_dcf=0, lfo_dca=0)),
-    ("Telephone Ring",         P(SFX, dco=[osc(SQUARE, 78), osc(SQUARE, 50, coarse=7), None],
+    ("Telephone Ring",         P(SFX, dco=[osc(SQUARE, 78), osc(SQUARE, 50, coarse=7)],
                                   dca_env_a=127, dca_env_s=110, dca_env_r=90,
                                   dcf_freq=cut(96), lfo_freq=lfo(12.0), lfo_dca=79, lfo_dcf=0)),
-    ("Helicopter",             P(SFX, dco=[osc(SQUARE, 84, coarse=-36), None, None],
+    ("Helicopter",             P(SFX, dco=[osc(SQUARE, 78, coarse=-36), osc(NOISE, 27)],
                                   dca_env_a=20, dca_env_s=110, dca_env_r=20,
                                   dcf_freq=cut(48), lfo_freq=lfo(11.0), lfo_dca=86, lfo_dcf=4)),
-    ("Applause",               P(SFX, dco=[osc(SAW, 38, coarse=17, fine=13),
-                                           osc(SQUARE, 36, coarse=25, fine=-19),
-                                           osc(SAW, 34, coarse=30, fine=27)],
+    ("Applause",               P(SFX, dco=[osc(SINE, 10, coarse=19), osc(NOISE, 60), None],
                                   dca_env_a=8, dca_env_s=112, dca_env_r=8,
                                   dcf_freq=cut(104), lfo_freq=lfo(9.0), lfo_dca=50, lfo_dcf=10)),
-    ("Gunshot",                P(SFX, dco=[osc(SQUARE, 100, coarse=-24), osc(SAW, 60, coarse=-17, fine=23), None],
+    ("Gunshot",                P(SFX, dco=[osc(SINE, 70, coarse=-24), osc(NOISE, 46)], **auxenv(127, 110, 0, 110),
                                   dca_env_a=127, dca_env_d=44, dca_env_s=0, dca_env_r=50,
                                   dcf_freq=cut(90),
                                   dco_env_level=-38, dco_env_a=127, dco_env_d=100,
@@ -552,17 +618,31 @@ for i, (name, p) in enumerate(GM):
         out.write("\t// %s\n" % FAMILY[i])
         out.write("\t//--------------------------------------------------------------\n")
     out.write("\t{\t// %d  %s\n" % (i + 1, name))
-    out.write("\t\t.dco = {\n")
-    for d in p["dco"]:
-        if not d["level"]:
-            continue
+
+    pri, aux, sub, oct_ = arrange(p["dco"])
+
+    def emit(d):
         bits = [".wave = %s" % WAVE_NAME[d["wave"]], ".level = %d" % d["level"]]
         if d["coarse"]:
             bits.append(".coarse = %d" % d["coarse"])
         if d["fine"]:
             bits.append(".fine = %d" % d["fine"])
-        out.write("\t\t\t{ %s },\n" % ", ".join(bits))
+        return "{ %s }" % ", ".join(bits)
+
+    out.write("\t\t.dco = {\n")
+    out.write("\t\t\t%s,\n" % emit(pri))
+    if aux:
+        out.write("\t\t\t%s,\n" % emit(aux))
     out.write("\t\t},\n")
+
+    if sub:
+        out.write("\t\t.sub_level     = %d,\n" % sub["level"])
+        out.write("\t\t.sub_octaves   = %d,\n" % oct_)
+
+    for k in ("aux_env_a", "aux_env_d", "aux_env_s", "aux_env_r"):
+        if p.get(k):
+            out.write("\t\t.%-14s = %s,\n" % (k, p[k]))
+
     for k in ORDER:
         v = p.get(k, 0)
         if v:

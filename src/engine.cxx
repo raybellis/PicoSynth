@@ -1,14 +1,8 @@
-#include <cstdio>
-
-#include "hardware/interp.h"
-#include "hardware/divider.h"
+#include "pico.h"			// __not_in_flash_func
 
 #include "engine.h"
-#include "audio.h"
-#include "data.h"
 #include "envelope.h"
 #include "midi.h"
-#include "waves.h"
 
 //--------------------------------------------------------------------+
 // Utility functions
@@ -68,6 +62,13 @@ uint32_t __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 		if (v.dcf_env) {
 			v.dcf_env->update();
 		}
+
+		// and dco[1]'s own, which only exists if the patch asked for it.
+		// note that this one cannot end the note the way the DCA can -
+		// it silences one oscillator, and the voice plays on
+		if (v.aux_env) {
+			v.aux_env->update();
+		}
 	}
 
 	// advance every channel's LFO, whether or not anything is sounding
@@ -76,17 +77,6 @@ uint32_t __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 	for (auto& c : channel) {
 		c.lfo_tick();
 	}
-
-	// set up both interpolators, identically.  a voice runs three
-	// oscillators and each needs its own phase accumulator, so having
-	// two of these is what lets a pair of them share one pass over the
-	// buffer instead of taking one each - see Voice::oscillators()
-	interp_config cfg = interp_default_config();
-	interp_config_set_shift(&cfg, 15);
-	interp_config_set_mask(&cfg, 1, WAVE_SHIFT);
-	interp_config_set_add_raw(&cfg, true);
-	interp_set_config(interp0, 0, &cfg);
-	interp_set_config(interp1, 0, &cfg);
 
 	for (auto& v : pool) {
 		++voices;
