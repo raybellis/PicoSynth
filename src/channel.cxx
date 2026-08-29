@@ -4,6 +4,7 @@
 #include "channel.h"
 #include "data.h"
 #include "midi.h"
+#include "patch.h"			// presets[], for the channel LFO rate
 
 // Deliberately does not set the derived values - see init().
 //
@@ -25,8 +26,16 @@ Channel::Channel() :
 
 void Channel::init()
 {
+	lfo_pos = 0;
+	pressure = 0;
+
 	set_cc(volume, 127);
 	set_cc(pan, 64);
+
+	// expression multiplies volume in the DCA chain, so left at its
+	// zero-initialised value it would silence the channel outright -
+	// 127 is both the MIDI default and the only safe one
+	set_cc(expression, 127);
 
 	// these two offset the patch either side of centre, so they have
 	// to start centred - left at zero they would close every filter
@@ -39,6 +48,14 @@ void Channel::init()
 void Channel::set_program(uint8_t n)
 {
 	program = n;
+}
+
+// One tick per buffer, for every channel whether or not it is sounding
+// - sixteen adds, against the per-voice work this replaces for any
+// patch that asks for the global phase
+void Channel::lfo_tick()
+{
+	lfo_pos = (lfo_pos + note_table[presets[program % NPRESETS].lfo_freq]) & (WAVE_MAX - 1);
 }
 
 void Channel::set_cc(uint8_t cc, uint8_t v)

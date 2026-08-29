@@ -25,6 +25,7 @@
 #endif
 
 #include "bench.h"
+#include "dsp.h"
 #include "audio.h"
 #include "data.h"
 #include "waves.h"
@@ -378,6 +379,51 @@ void midi_init()
 
 int32_t samples[2 * BUFFER_SIZE];
 
+//--------------------------------------------------------------------+
+// Output stage
+//--------------------------------------------------------------------+
+
+// How far down the accumulator is shifted on its way into the 16-bit
+// buffer.  This number is a claim about how voices sum, so it is worth
+// stating what the claim is.
+//
+// One voice at full level contributes (63500 * 32767) >> 16, about
+// 31750.  A shift of 6 - divide by 64 - is what it takes for 64 of
+// those to fit *in phase*, and that is how this used to be set.  But
+// voices are at unrelated phases, so they sum in power rather than
+// amplitude: 64 uncorrelated voices reach about 8 times one voice, not
+// 64 times.  Budgeting for the coherent case therefore threw away 18 dB
+// that no music ever used, and measurement agreed - a 16-channel piece
+// with the voice count pinned at 64 peaked at 2100 of 32767, which is
+// -24 dB.  Quiet material fell off the bottom entirely.
+//
+// 3 is sqrt(64), the power-summing case, which puts a busy passage near
+// full scale.  The rare coherent peak is what the limiter below is for.
+#define OUTPUT_SHIFT	3
+
+// Peak limiter, stereo-linked.
+//
+// Attack is instantaneous - any sample over the threshold sets the gain
+// that exactly meets it, so the output cannot exceed the threshold and
+// there is no overshoot to catch.  Release is a slow exponential back
+// to unity, which is what keeps it from pumping: gain only ever moves
+// quickly downwards, and crawls back up over ~150 ms.
+//
+// Both channels share one gain.  Limiting them separately would pull
+// the image towards whichever side was quieter every time it engaged.
+//
+// Note this is *not* a voice-count normaliser, and deliberately so.
+// Dividing by the number of sounding voices would make adding a note
+// quieten every note already playing, which is audible pumping and
+// backwards musically - a chord should be louder than a single note.
+// The gain here only moves when the output would actually clip.
+#define LIMIT_THRESHOLD	32767.0f
+
+// 1 / (tau * Fs), for tau = 150 ms
+#define LIMIT_RELEASE	(1.0f / (0.150f * SAMPLE_RATE))
+
+static float limiter_gain = 1.0f;
+
 
 void audio_task(void)
 {
@@ -410,9 +456,39 @@ void audio_task(void)
 		tight_loop_contents();
 	}
 
-	for (auto i = 0U; i < 2 * BUFFER_SIZE; ++i) {
-		out[i] = samples[i] >> 6;
+	// a sample pair at a time, so that the limiter sees the louder of
+	// the two channels and applies one gain to both
+	float gain = limiter_gain;
+
+	for (auto i = 0U; i < BUFFER_SIZE; ++i) {
+		int32_t l = samples[2 * i]     >> OUTPUT_SHIFT;
+		int32_t r = samples[2 * i + 1] >> OUTPUT_SHIFT;
+
+		int32_t al = l < 0 ? -l : l;
+		int32_t ar = r < 0 ? -r : r;
+		int32_t peak = al > ar ? al : ar;
+
+		// instantaneous attack: take the gain that exactly meets the
+		// threshold, and only ever downwards
+		if (peak > LIMIT_THRESHOLD) {
+			float need = LIMIT_THRESHOLD / (float)peak;
+			if (need < gain) {
+				gain = need;
+			}
+		}
+
+		// clamped as well as limited: the limiter holds the signal at
+		// the threshold, so this only catches the rounding, but the
+		// accumulator can reach 2^18 and wrapping would invert the
+		// waveform rather than flatten it
+		out[2 * i]     = clamp16(to_int(l * gain));
+		out[2 * i + 1] = clamp16(to_int(r * gain));
+
+		// and crawl back towards unity
+		gain += (1.0f - gain) * LIMIT_RELEASE;
 	}
+
+	limiter_gain = gain;
 
 	audio_give();
 }

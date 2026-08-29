@@ -157,7 +157,6 @@ target_link_libraries(${PROJECT} PRIVATE
 	pico_multicore
 	pico_audio_i2s
 	pico_unique_id
-	hardware_interp
 	hardware_uart
 	hardware_irq
 	tinyusb_device

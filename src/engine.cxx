@@ -1,51 +1,12 @@
-#include <cstdio>
-
-#include "hardware/interp.h"
-#include "hardware/divider.h"
+#include "pico.h"			// __not_in_flash_func
 
 #include "engine.h"
-#include "audio.h"
-#include "data.h"
 #include "envelope.h"
 #include "midi.h"
-#include "waves.h"
 
 //--------------------------------------------------------------------+
 // Utility functions
 //--------------------------------------------------------------------+
-
-// x is a (14-bit signed) offset into the power table which contains
-/// 1:15 fixed-point log2 multipliers for x = 0.500 ..< 2.000
-static inline void frequency_modulate(uint32_t& step, int16_t x)
-{
-	// power_table holds 2^(r/8192) as 1:15 for one octave, r in
-	// [0, 8192).  the octave below is the same entries read as 1:16 -
-	// that is, with this shift left omitted - because table[x + 8192]
-	// is by definition 65536 * 2^(x/8192) when x is negative.  exact,
-	// not an approximation, and it is what lets the table be half the
-	// size the +/- range would otherwise need
-	uint32_t mul = (x < 0)
-		? power_table[(x + 8192) >> POWER_SHIFT]		// 1:16, [0.5, 1)
-		: power_table[x >> POWER_SHIFT] << 1;			// 1:16, [1, 2)
-
-	// the product needs 48 bits.  this used to be split into 16-bit
-	// halves and reassembled, because ARMv6-M has no 32x32->64
-	// multiply; the M33 does, so one umull covers it.  the result is
-	// bit identical - the old form was exactly this sum
-	step = ((uint64_t)step * mul) >> 16;
-}
-
-// combines a 7-bit patch parameter with its controller, which offsets
-// it either side of centre, and holds the result in range
-static inline uint8_t cc_offset(uint8_t base, uint8_t cc)
-{
-	int16_t v = (int16_t)base + cc - 64;
-
-	if (v < 0) return 0;
-	if (v > 127) return 127;
-
-	return v;
-}
 
 //--------------------------------------------------------------------+
 // Core synth engine
@@ -72,9 +33,6 @@ void SynthEngine::init()
 	}
 }
 
-// temporary buffer of mono samples
-static int16_t mono[BUFFER_SIZE];
-
 // returns the number of voices rendered, which is what the benchmark
 // figures need reading against - the pool iterator only visits voices
 // in use, and every one of them costs a full render and filter pass
@@ -99,98 +57,30 @@ uint32_t __not_in_flash_func(SynthEngine::update)(int32_t* samples, size_t n)
 		if (p.dco_env_level && v.dco_env) {
 			v.dco_env->update();
 		}
+
+		// and the DCF envelope, which only exists at non-zero depth
+		if (v.dcf_env) {
+			v.dcf_env->update();
+		}
+
+		// and dco[1]'s own, which only exists if the patch asked for it.
+		// note that this one cannot end the note the way the DCA can -
+		// it silences one oscillator, and the voice plays on
+		if (v.aux_env) {
+			v.aux_env->update();
+		}
 	}
 
-	// set up the interpolator
-	interp_config cfg = interp_default_config();
-	interp_config_set_shift(&cfg, 15);
-	interp_config_set_mask(&cfg, 1, WAVE_SHIFT);
-	interp_config_set_add_raw(&cfg, true);
-	interp_set_config(interp0, 0, &cfg);
+	// advance every channel's LFO, whether or not anything is sounding
+	// on it - sixteen adds a buffer, against one per voice for any
+	// patch that uses the global phase
+	for (auto& c : channel) {
+		c.lfo_tick();
+	}
 
 	for (auto& v : pool) {
-
 		++voices;
-
-		// get a reference to the channel parameters
-		auto& chan = *v.channel;
-
-		// and a reference to the current note's patch
-		auto& p = *v.patch;
-
-		// the chain is 15 + 7 + 7 + 7 + 7 = 43 bits.  the 32-bit form
-		// had to shift twice partway through to stay in range, losing
-		// 11 bits, and still finished within 1% of overflowing
-		// uint32_t on the last multiply.  the M33 carries all 43 bits,
-		// so the final shift is the only rounding left
-
-		// get the 15-bit DCA current envelope level
-		uint64_t dca = v.dca_env->level();		// 15 bits
-
-		// scale the DCA by the patch's 7-bit DCA master level
-		dca *= p.dca_env_level;					// 22 bits
-
-		// scale the DCA by the 7-bit note velocity
-		dca *= v.vel;							// 29 bits
-
-		// scale the DCA by the 7-bit channel volume
-		dca *= chan.control[volume];			// 36 bits
-
-		// apply 7-bit pan and scale back to 16 bits
-		uint16_t level_l = (dca * chan.pan_l) >> 27;	// 43 - 27
-		uint16_t level_r = (dca * chan.pan_r) >> 27;
-
-		// scale the DCO step by the current pitchbend amount
-		v.dco_step = v.dco_step_base;
-		if (chan.bend) {
-			frequency_modulate(v.dco_step, chan.bend_f);
-		}
-		// apply the DCO envelope
-		if (v.dco_env && p.dco_env_level) {
-			int32_t env = v.dco_env->level();	// 16 bits
-			if (true || env) {
-				env = env * p.dco_env_level;	// 24 bits
-				env >>= 10;						// 14 bits
-				frequency_modulate(v.dco_step, env);
-			}
-		}
-
-		// update and apply the LFO
-		uint8_t wheel = chan.control[modwheel];
-		v.lfo_step = note_table[p.lfo_freq];
-		v.lfo_pos = (v.lfo_pos + v.lfo_step) & (WAVE_MAX - 1);
-		if (wheel && p.lfo_depth) {
-			int16_t* lfo_wave = waves[p.lfo_wave];
-			int32_t lfo_amount = lfo_wave[v.lfo_pos >> 16];	// 16 bits
-			lfo_amount *= p.lfo_depth;						// 23 bits
-			lfo_amount *= wheel;							// 30 bits
-			lfo_amount >>= 16;								// 14 bits
-			frequency_modulate(v.dco_step, lfo_amount);
-		}
-
-		// generate a buffer full of (mono) samples
-		v.update(mono, n);
-
-		// set the filter from the patch, offset by the channel's two
-		// sound controllers.  this is done per buffer rather than at
-		// note-on so that moving a controller takes effect on notes
-		// that are already sounding
-		v.filter->set_cutoff(cutoff_table[cc_offset(p.vcf_freq, chan.control[brightness])]);
-		v.filter->set_q(cc_offset(p.vcf_reso, chan.control[resonance]));
-
-		// apply the filter.  this has to happen even while the voice
-		// is inaudible, otherwise its state is stale by the time the
-		// level comes back up, and it clicks
-		v.filter->apply(mono, n);
-
-		// don't bother accumulating silent channels
-		if (!dca) continue;
-
-		// accumulate the samples into the supplied output buffer
-		for (size_t i = 0, j = 0; i < n; ++i) {
-			samples[j++] += (level_l * mono[i]) >> 16;
-			samples[j++] += (level_r * mono[i]) >> 16;
-		}
+		v.render(samples, n);
 	}
 
 	return voices;
@@ -202,16 +92,63 @@ void SynthEngine::note_on(uint8_t chan, uint8_t note, uint8_t vel)
 	if (vp) {
 		auto& v = *vp;
 		v.channel = &channel[chan];
-		v.patch = &presets[v.channel->program % 4];
+		v.patch = &presets[v.channel->program % NPRESETS];
 		v.note_on(chan, note, vel);
 	}
 }
 
+// With the sustain pedal down the note carries on sounding and the
+// release is owed until the pedal comes up, which is what a piano does
+// and what any pedalled part is written expecting.  The note is marked
+// rather than released; sustain_off() below settles the debt.
 void SynthEngine::note_off(uint8_t chan, uint8_t note, uint8_t vel)
 {
 	Channel* c = &channel[chan];
+	bool pedal = c->control[sustain] >= 64;
+
 	for (auto& v: pool) {
 		if (v.channel == c && v.note == note) {
+			if (pedal) {
+				v.sustained = true;
+			} else {
+				v.note_off();
+			}
+		}
+	}
+}
+
+// CC 123 lets everything go into its release; CC 120 cuts it dead.
+//
+// Both ignore the sustain pedal, which is the point of them: a file
+// that sends a pedal down and then stops would otherwise ring for good,
+// there being nothing left to lift it.  Releasing mid-iteration is safe
+// - the pool iterator only visits voices in use, and release() marks
+// them free behind it
+void SynthEngine::notes_off(uint8_t chan, bool immediate)
+{
+	Channel* c = &channel[chan];
+
+	for (auto& v: pool) {
+		if (v.channel != c) continue;
+
+		v.sustained = false;
+
+		if (immediate) {
+			pool.release(v);
+		} else {
+			v.note_off();
+		}
+	}
+}
+
+// the pedal has come up: release everything it was holding
+void SynthEngine::sustain_off(uint8_t chan)
+{
+	Channel* c = &channel[chan];
+
+	for (auto& v: pool) {
+		if (v.channel == c && v.sustained) {
+			v.sustained = false;
 			v.note_off();
 		}
 	}
@@ -234,6 +171,18 @@ void SynthEngine::midi_in(uint8_t c, uint8_t d1, uint8_t d2)
 			}
 			break;
 		case 0xb:
+			channel[chan].midi_in(c, d1, d2);
+
+			// the channel stores these, but only the engine can see the
+			// voices they act on
+			if (d1 == sustain && d2 < 64) {
+				sustain_off(chan);
+			} else if (d1 == all_notes_off) {
+				notes_off(chan, false);
+			} else if (d1 == all_sound_off) {
+				notes_off(chan, true);
+			}
+			break;
 		case 0xc:
 		case 0xd:
 		case 0xe:

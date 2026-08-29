@@ -12,12 +12,24 @@ Envelope::Envelope()
 // Standard four phase ADSR Envelope
 //--------------------------------------------------------------------+
 
+// a, d and r are rates, not times, and each is used as the amount to
+// move the level by on every buffer.  A rate of zero would move it by
+// nothing, so the phase would never end: an attack of zero never
+// reaches peak, which means the note never sounds at all rather than
+// sounding instantly.  Hence the floor of 1.
+//
+// This used to be written as three `if (a < 1) a = 1;` in the
+// constructor body, which did nothing - the members were already
+// initialised from the parameters by the list above, and the body was
+// assigning to the parameters.  No preset had a zero rate, so it stayed
+// latent.
 ADSR::ADSR(uint8_t a, uint8_t d, uint8_t s, uint8_t r)
-	: s(s << 8), a(a), d(d), r(r), phase(off)
+	: s(s << 8),
+	  a(a < 1 ? 1 : a),
+	  d(d < 1 ? 1 : d),
+	  r(r < 1 ? 1 : r),
+	  phase(off)
 {
-	if (a < 1) a = 1;
-	if (d < 1) d = 1;
-	if (r < 1) r = 1;
 }
 
 int16_t ADSR::update()

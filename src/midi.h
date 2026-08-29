@@ -13,5 +13,10 @@ enum CC : uint8_t {
 	// sound controllers, which offset the patch either side of 64
 	// rather than setting it outright
 	resonance	= 71,
-	brightness	= 74
+	brightness	= 74,
+
+	// channel mode messages.  a file that sends a pedal down and then
+	// stops leaves its notes ringing without these
+	all_sound_off	= 120,
+	all_notes_off	= 123
 };
